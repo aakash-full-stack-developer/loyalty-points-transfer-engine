@@ -1,4 +1,4 @@
-from sqlalchemy import func, select, text
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.db.models import (
@@ -12,23 +12,8 @@ from app.db.models import (
 )
 from app.db.session import unit_of_work
 from app.domain.enums import AccountType, OwnerType
+from app.services.ledger_invariants import find_violations
 from scripts.seed import USERS, SeedReport, seed
-
-# Same queries as docs/ledger-invariants.md; each returns zero rows when the ledger is healthy.
-PROGRAM_TOTAL_NOT_ZERO = """
-    SELECT program_id FROM accounts GROUP BY program_id HAVING SUM(balance) <> 0
-"""
-UNBALANCED_JOURNALS = """
-    SELECT journal_id FROM ledger_entries GROUP BY journal_id, program_id
-    HAVING COALESCE(SUM(amount) FILTER (WHERE direction = 'DEBIT'), 0)
-        <> COALESCE(SUM(amount) FILTER (WHERE direction = 'CREDIT'), 0)
-"""
-BALANCE_DRIFT = """
-    SELECT a.id FROM accounts a LEFT JOIN ledger_entries e ON e.account_id = a.id
-    GROUP BY a.id, a.balance
-    HAVING a.balance
-        <> COALESCE(SUM(CASE WHEN e.direction = 'CREDIT' THEN e.amount ELSE -e.amount END), 0)
-"""
 
 
 async def _row_counts(session: AsyncSession) -> dict[str, int]:
@@ -81,8 +66,7 @@ async def test_seeded_ledger_satisfies_all_invariants(
     seeded: SeedReport, session_factory: async_sessionmaker[AsyncSession]
 ) -> None:
     async with session_factory() as session:
-        for query in (PROGRAM_TOTAL_NOT_ZERO, UNBALANCED_JOURNALS, BALANCE_DRIFT):
-            assert (await session.execute(text(query))).all() == []
+        assert await find_violations(session) == []
 
 
 async def test_opening_balances_are_mirrored_by_negative_settlement_accounts(

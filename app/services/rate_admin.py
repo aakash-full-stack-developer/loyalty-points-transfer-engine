@@ -15,6 +15,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import aliased
 
+from app.db.errors import violated_constraint
 from app.db.models import ConversionRate, Program, TransferBonus
 from app.db.session import unit_of_work
 from app.domain.errors import DomainError, ErrorCode
@@ -210,7 +211,7 @@ class RateAdminService:
             try:
                 await session.flush()
             except IntegrityError as exc:
-                if "ex_transfer_bonuses_no_overlap" in str(exc.orig):
+                if violated_constraint(exc) == "ex_transfer_bonuses_no_overlap":
                     raise DomainError(
                         ErrorCode.BONUS_OVERLAP,
                         "Another bonus on this route overlaps the requested period.",

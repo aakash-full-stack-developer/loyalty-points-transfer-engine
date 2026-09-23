@@ -17,6 +17,7 @@ class ErrorCode(StrEnum):
     NOT_FOUND = "NOT_FOUND"
     METHOD_NOT_ALLOWED = "METHOD_NOT_ALLOWED"
     ADMIN_AUTH_REQUIRED = "ADMIN_AUTH_REQUIRED"
+    AUTHENTICATION_REQUIRED = "AUTHENTICATION_REQUIRED"
     HTTP_ERROR = "HTTP_ERROR"
     INTERNAL_ERROR = "INTERNAL_ERROR"
 
@@ -31,6 +32,9 @@ class ErrorCode(StrEnum):
     ABOVE_MAXIMUM = "ABOVE_MAXIMUM"
     INVALID_INCREMENT = "INVALID_INCREMENT"
     ZERO_DESTINATION_POINTS = "ZERO_DESTINATION_POINTS"
+
+    # Balances
+    INSUFFICIENT_BALANCE = "INSUFFICIENT_BALANCE"
 
     # Rate administration
     INVALID_RATE = "INVALID_RATE"
@@ -52,6 +56,12 @@ ERROR_CATALOGUE: dict[ErrorCode, ErrorSpec] = {
     ErrorCode.METHOD_NOT_ALLOWED: ErrorSpec(HTTPStatus.METHOD_NOT_ALLOWED, "Method not allowed"),
     ErrorCode.ADMIN_AUTH_REQUIRED: ErrorSpec(
         HTTPStatus.UNAUTHORIZED, "A valid X-Admin-Key header is required"
+    ),
+    ErrorCode.AUTHENTICATION_REQUIRED: ErrorSpec(
+        HTTPStatus.UNAUTHORIZED, "A valid X-User-Id header is required"
+    ),
+    ErrorCode.INSUFFICIENT_BALANCE: ErrorSpec(
+        HTTPStatus.UNPROCESSABLE_ENTITY, "Insufficient balance"
     ),
     # Other protocol-level errors raised by the framework; the real status is used.
     ErrorCode.HTTP_ERROR: ErrorSpec(HTTPStatus.BAD_REQUEST, "HTTP error"),

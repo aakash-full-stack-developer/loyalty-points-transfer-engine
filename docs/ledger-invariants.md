@@ -1,11 +1,27 @@
 # Ledger invariants
 
 The ledger is double-entry: every journal is balanced per program, and for every account
-`balance = sum(CREDIT entries) - sum(DEBIT entries)`. Three consequences must always hold.
-Each query below returns **zero rows** when the ledger is healthy.
+`balance = sum(CREDIT entries) - sum(DEBIT entries)`. The consequences below must always
+hold. Each query returns **zero rows** when the ledger is healthy.
 
-Run them with `make psql` and paste the query. `make check-invariants` (added in step 4)
-runs all three and exits non-zero on any violation.
+```bash
+make check-invariants
+# OK: all 4 ledger invariants hold (20 accounts, 10 journals)
+```
+
+`make check-invariants` runs every check in one REPEATABLE READ snapshot and exits with a
+non-zero code on any violation, printing each offending row. The queries live in
+`app/services/ledger_invariants.py` (the test suite uses the same code). To run one by hand,
+open `make psql` and paste it. A fourth check, "no user balance is negative", duplicates the
+CHECK constraint as a belt-and-braces report.
+
+Example of a detected problem (a balance edited directly in the database):
+
+```text
+FAIL: 2 ledger invariant violation(s)
+  - program_balances_sum_to_zero: {'program': 'NOVA_REWARDS', 'total': 7}
+  - account_balance_matches_entries: {'account_id': 16, 'stored_balance': 50007, 'ledger_balance': 50000}
+```
 
 ## 1. Balances per program sum to zero
 

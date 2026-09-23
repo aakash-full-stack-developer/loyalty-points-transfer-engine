@@ -4,9 +4,9 @@ Idempotent: every step inserts only what is missing, so running it twice changes
 The whole seed runs in one transaction under an advisory lock, so two concurrent runs can't
 interleave.
 
-Opening balances are never written directly. Each is posted as a balanced SEED journal
-(CREDIT the user's account, DEBIT the program's PARTNER_SETTLEMENT account), so the ledger
-invariant "sum of balances per program == 0" holds from the very first row.
+Opening balances are never written directly. Each is posted through the ledger service as a
+balanced SEED journal (CREDIT the user's account, DEBIT the program's PARTNER_SETTLEMENT
+account), so the invariant "sum of balances per program == 0" holds from the very first row.
 
 All programs, companies and member ids are fictional.
 """
@@ -15,22 +15,15 @@ import asyncio
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select, text, update
+from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
-from app.db.models import (
-    Account,
-    ConversionRate,
-    LedgerEntry,
-    LedgerJournal,
-    Program,
-    TransferBonus,
-    User,
-)
+from app.db.models import Account, ConversionRate, Program, TransferBonus, User
 from app.db.session import create_engine, create_session_factory, unit_of_work
 from app.domain.enums import AccountType, EntryDirection, JournalType, OwnerType, ProgramType
+from app.services.ledger import Posting, post_journal
 
 # Arbitrary constant identifying the seed's advisory lock.
 _SEED_LOCK_ID = 7_400_001
@@ -303,41 +296,14 @@ async def _post_opening_balance(
     settlement_account_id: int,
     amount: int,
 ) -> None:
-    """SEED journal: CREDIT the user account, DEBIT the program's settlement account.
-
-    The ledger service (step 4) will own journal posting; seeding writes the two entries
-    directly because it is the only other writer and runs before any transfer exists.
-    """
-    journal = LedgerJournal(journal_type=JournalType.SEED)
-    session.add(journal)
-    await session.flush()
-    session.add_all(
+    """SEED journal through the ledger: CREDIT the user, DEBIT the program's settlement."""
+    await post_journal(
+        session,
+        JournalType.SEED,
         [
-            LedgerEntry(
-                journal_id=journal.id,
-                account_id=user_account_id,
-                program_id=program_id,
-                direction=EntryDirection.CREDIT,
-                amount=amount,
-            ),
-            LedgerEntry(
-                journal_id=journal.id,
-                account_id=settlement_account_id,
-                program_id=program_id,
-                direction=EntryDirection.DEBIT,
-                amount=amount,
-            ),
-        ]
-    )
-    await session.execute(
-        update(Account)
-        .where(Account.id == user_account_id)
-        .values(balance=Account.balance + amount)
-    )
-    await session.execute(
-        update(Account)
-        .where(Account.id == settlement_account_id)
-        .values(balance=Account.balance - amount)
+            Posting(user_account_id, program_id, EntryDirection.CREDIT, amount),
+            Posting(settlement_account_id, program_id, EntryDirection.DEBIT, amount),
+        ],
     )
 
 

@@ -56,6 +56,21 @@ class ProgramList(BaseModel):
     data: list[ProgramOut]
 
 
+# ---------------------------------------------------------------- accounts
+class AccountOut(BaseModel):
+    program: str
+    program_name: str
+    program_type: ProgramType
+    balance: int
+    external_member_id: str | None = Field(description="Masked: only the last 4 characters")
+    updated_at: datetime
+
+
+class AccountList(BaseModel):
+    user_id: str
+    data: list[AccountOut]
+
+
 # ---------------------------------------------------------------- quotes
 class QuoteRequest(RequestModel):
     source_program: ProgramCode

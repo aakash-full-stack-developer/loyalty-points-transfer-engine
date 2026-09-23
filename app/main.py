@@ -8,7 +8,7 @@ from fastapi import FastAPI
 
 from app import __version__
 from app.api.errors import register_exception_handlers
-from app.api.routes import admin, health, programs, quotes
+from app.api.routes import accounts, admin, health, programs, quotes
 from app.cache.redis import create_redis
 from app.config import Settings, get_settings
 from app.db.session import create_engine, create_session_factory
@@ -50,6 +50,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     register_exception_handlers(app)
     app.include_router(health.router)
     app.include_router(programs.router)
+    app.include_router(accounts.router)
     app.include_router(quotes.router)
     app.include_router(admin.router)
     return app

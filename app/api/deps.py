@@ -1,6 +1,7 @@
 """FastAPI dependencies: process-wide resources from the app lifespan, and service wiring."""
 
 import hmac
+import re
 from collections.abc import AsyncIterator
 from datetime import timedelta
 from typing import Annotated, cast
@@ -73,6 +74,26 @@ def get_rate_admin_service(
 
 QuoteServiceDep = Annotated[QuoteService, Depends(get_quote_service)]
 RateAdminServiceDep = Annotated[RateAdminService, Depends(get_rate_admin_service)]
+
+
+_USER_ID_PATTERN = re.compile(r"[A-Za-z0-9_.-]{1,64}")
+
+
+async def get_current_user_id(
+    x_user_id: Annotated[
+        str | None,
+        Header(description="Stand-in for an authenticated identity (auth is out of scope)"),
+    ] = None,
+) -> str:
+    """The caller's user id. In production this would come from a verified token."""
+    if x_user_id is None or not _USER_ID_PATTERN.fullmatch(x_user_id):
+        raise DomainError(
+            ErrorCode.AUTHENTICATION_REQUIRED, "Missing or malformed X-User-Id header."
+        )
+    return x_user_id
+
+
+CurrentUserId = Annotated[str, Depends(get_current_user_id)]
 
 
 async def require_admin(

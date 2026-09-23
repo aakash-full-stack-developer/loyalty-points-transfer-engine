@@ -12,7 +12,7 @@ TOOLS ?= $(COMPOSE) run --rm --user "$$(id -u):$$(id -g)" tools
 # Same as TOOLS but without starting PostgreSQL/Redis/simulator (lint, typecheck, unit tests).
 TOOLS_NODEPS ?= $(COMPOSE) run --rm --no-deps --user "$$(id -u):$$(id -g)" tools
 
-.PHONY: help up down logs ps build shell migrate makemigration seed psql reset test test-unit \
+.PHONY: help up down logs ps build shell migrate makemigration seed check-invariants psql reset test test-unit \
 	test-integration coverage lint format typecheck demo run-local
 
 help: ## Show this help
@@ -48,6 +48,9 @@ makemigration: ## Autogenerate a migration from model changes: make makemigratio
 
 seed: ## Load seed data (idempotent, safe to run repeatedly)
 	$(TOOLS) python -m scripts.seed
+
+check-invariants: ## Verify ledger invariants (exit code 1 on any violation)
+	$(TOOLS) python -m scripts.check_invariants
 
 psql: ## Open psql on the running PostgreSQL container
 	$(COMPOSE) exec postgres sh -c 'psql -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"'
