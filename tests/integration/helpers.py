@@ -1,6 +1,7 @@
 """Helpers shared by integration tests: ledger access and API/simulator shortcuts."""
 
 import uuid
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -12,6 +13,19 @@ from app.domain.enums import AccountType, OwnerType
 from app.domain.ids import new_transfer_id
 
 CARD_TO_AIRLINE = ("NOVA_REWARDS", "SKYWARD_MILES")
+
+
+class Clock:
+    """A controllable clock for services that take one: 'an hour later' takes no time."""
+
+    def __init__(self) -> None:
+        self.now = datetime.now(UTC)
+
+    def __call__(self) -> datetime:
+        return self.now
+
+    def advance(self, **delta: float) -> None:
+        self.now += timedelta(**delta)
 
 
 async def transfer(

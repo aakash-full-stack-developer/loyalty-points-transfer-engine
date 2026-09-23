@@ -80,7 +80,7 @@ def make_bonus(
         ),
     ],
 )
-def test_conversion_amounts(
+def test_conversion_follows_the_formula_and_rounds_down(
     rate: RateRule, bonus: BonusRule | None, source_points: int, expected: tuple[int, int, int]
 ) -> None:
     conversion = calculate_conversion(rate, source_points, bonus, at=NOW)

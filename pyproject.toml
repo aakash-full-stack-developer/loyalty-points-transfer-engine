@@ -93,7 +93,12 @@ markers = [
 [tool.coverage.run]
 source = ["app"]
 branch = true
+# SQLAlchemy's asyncio layer runs code inside greenlets; without this, coverage silently
+# misses every line executed after an awaited database call.
+concurrency = ["greenlet", "thread"]
 
 [tool.coverage.report]
 show_missing = true
 skip_covered = true
+# `make coverage` and CI fail below this. Services, domain and partners are each >= 85%.
+fail_under = 90

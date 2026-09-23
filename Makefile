@@ -74,7 +74,7 @@ test-unit: ## Run unit tests only (no services needed)
 test-integration: ## Run integration tests (PostgreSQL, Redis, partner simulator)
 	$(TOOLS) pytest -m integration
 
-coverage: ## Run all tests with a coverage report (terminal + htmlcov/)
+coverage: ## Run all tests with a coverage report (terminal + htmlcov/); fails below 90%
 	$(TOOLS) pytest --cov --cov-report=term-missing --cov-report=html
 
 lint: ## Check style and common bugs with ruff (lint + format check)

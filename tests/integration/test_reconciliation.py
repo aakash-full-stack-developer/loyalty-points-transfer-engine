@@ -8,7 +8,7 @@ controllable clock, so "one hour later" takes no time.
 
 import asyncio
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 
 import httpx
 import pytest
@@ -34,6 +34,7 @@ from app.workers.reconciler import run as run_worker
 from tests.integration.conftest import running_app
 from tests.integration.helpers import (
     CARD_TO_AIRLINE,
+    Clock,
     balances,
     clearing_balance,
     partner_credits,
@@ -54,17 +55,6 @@ POLICY = ReconciliationPolicy(
     backoff_base=timedelta(seconds=10),
     backoff_max=timedelta(seconds=600),
 )
-
-
-class Clock:
-    def __init__(self) -> None:
-        self.now = datetime.now(UTC)
-
-    def __call__(self) -> datetime:
-        return self.now
-
-    def advance(self, **delta: float) -> None:
-        self.now += timedelta(**delta)
 
 
 @pytest.fixture

@@ -314,32 +314,7 @@ async def test_reusing_a_key_for_a_different_transfer_is_rejected(
     assert response.json()["code"] == "IDEMPOTENCY_KEY_REUSED"
 
 
-async def test_concurrent_transfers_never_overdraw(
-    client: httpx.AsyncClient,
-) -> None:
-    # Bob has 50,000 NOVA points: only two of five 20,000-point transfers can succeed.
-    responses = await asyncio.gather(
-        *(transfer(client, *CARD_TO_AIRLINE, 20_000, user="user_bob") for _ in range(5))
-    )
-
-    outcomes = sorted(
-        # Error bodies carry a `code`; transfer bodies a string `status`.
-        response.json().get("code") or response.json()["status"]
-        for response in responses
-    )
-    assert outcomes == ["COMPLETED"] * 2 + ["INSUFFICIENT_BALANCE"] * 3
-    assert (await balances(client, "user_bob"))["NOVA_REWARDS"] == 10_000
-
-
-async def test_opposite_direction_transfers_for_one_user_all_complete(
-    client: httpx.AsyncClient,
-) -> None:
-    requests = [transfer(client, "NOVA_REWARDS", "SKYWARD_MILES", 3_000) for _ in range(5)]
-    requests += [transfer(client, "SKYWARD_MILES", "NOVA_REWARDS", 3_000) for _ in range(5)]
-
-    responses = await asyncio.wait_for(asyncio.gather(*requests), timeout=30)
-
-    assert {response.json()["status"] for response in responses} == {"COMPLETED"}
+# Concurrency (overdraw races, same-key races, deadlocks) lives in test_concurrency.py.
 
 
 # ---------------------------------------------------------------- reading transfers
