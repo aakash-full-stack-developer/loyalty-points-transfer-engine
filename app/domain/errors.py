@@ -36,6 +36,12 @@ class ErrorCode(StrEnum):
     # Balances
     INSUFFICIENT_BALANCE = "INSUFFICIENT_BALANCE"
 
+    # Idempotency
+    IDEMPOTENCY_KEY_REQUIRED = "IDEMPOTENCY_KEY_REQUIRED"
+    IDEMPOTENCY_KEY_INVALID = "IDEMPOTENCY_KEY_INVALID"
+    IDEMPOTENCY_REQUEST_IN_PROGRESS = "IDEMPOTENCY_REQUEST_IN_PROGRESS"
+    IDEMPOTENCY_KEY_REUSED = "IDEMPOTENCY_KEY_REUSED"
+
     # Rate administration
     INVALID_RATE = "INVALID_RATE"
     INVALID_BONUS = "INVALID_BONUS"
@@ -62,6 +68,19 @@ ERROR_CATALOGUE: dict[ErrorCode, ErrorSpec] = {
     ),
     ErrorCode.INSUFFICIENT_BALANCE: ErrorSpec(
         HTTPStatus.UNPROCESSABLE_ENTITY, "Insufficient balance"
+    ),
+    ErrorCode.IDEMPOTENCY_KEY_REQUIRED: ErrorSpec(
+        HTTPStatus.BAD_REQUEST, "The Idempotency-Key header is required"
+    ),
+    ErrorCode.IDEMPOTENCY_KEY_INVALID: ErrorSpec(
+        HTTPStatus.BAD_REQUEST, "The Idempotency-Key header is invalid"
+    ),
+    ErrorCode.IDEMPOTENCY_REQUEST_IN_PROGRESS: ErrorSpec(
+        HTTPStatus.CONFLICT, "A request with this Idempotency-Key is still in progress"
+    ),
+    ErrorCode.IDEMPOTENCY_KEY_REUSED: ErrorSpec(
+        HTTPStatus.UNPROCESSABLE_ENTITY,
+        "This Idempotency-Key was already used with a different request",
     ),
     # Other protocol-level errors raised by the framework; the real status is used.
     ErrorCode.HTTP_ERROR: ErrorSpec(HTTPStatus.BAD_REQUEST, "HTTP error"),

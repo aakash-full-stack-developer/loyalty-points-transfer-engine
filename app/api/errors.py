@@ -23,6 +23,28 @@ def problem_type(code: str) -> str:
     return f"urn:loyalty-engine:problem:{code.lower().replace('_', '-')}"
 
 
+def problem_body(
+    *,
+    status: int,
+    code: str,
+    title: str,
+    detail: str | None,
+    instance: str,
+    request_id: str | None,
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return {
+        **(extra or {}),  # standard members below always win over extra fields
+        "type": problem_type(code),
+        "title": title,
+        "status": status,
+        "detail": detail,
+        "code": code,
+        "instance": instance,
+        "request_id": request_id,
+    }
+
+
 def problem_response(
     *,
     status: int,
@@ -34,17 +56,28 @@ def problem_response(
     extra: dict[str, Any] | None = None,
     headers: dict[str, str] | None = None,
 ) -> JSONResponse:
-    body = {
-        **(extra or {}),  # standard members below always win over extra fields
-        "type": problem_type(code),
-        "title": title,
-        "status": status,
-        "detail": detail,
-        "code": code,
-        "instance": instance,
-        "request_id": request_id,
-    }
+    body = problem_body(
+        status=status,
+        code=code,
+        title=title,
+        detail=detail,
+        instance=instance,
+        request_id=request_id,
+        extra=extra,
+    )
     return JSONResponse(body, status_code=status, media_type=PROBLEM_MEDIA_TYPE, headers=headers)
+
+
+def domain_error_body(error: DomainError, instance: str, request_id: str | None) -> dict[str, Any]:
+    return problem_body(
+        status=error.status,
+        code=error.code,
+        title=error.title,
+        detail=error.detail,
+        instance=instance,
+        request_id=request_id,
+        extra=error.extra,
+    )
 
 
 def internal_error_response(instance: str, request_id: str | None) -> JSONResponse:
@@ -59,21 +92,14 @@ def internal_error_response(instance: str, request_id: str | None) -> JSONRespon
     )
 
 
-def _request_id(request: Request) -> str | None:
+def request_id_of(request: Request) -> str | None:
     return getattr(request.state, "request_id", None)
 
 
 async def _domain_error_handler(request: Request, exc: Exception) -> JSONResponse:
     assert isinstance(exc, DomainError)
-    return problem_response(
-        status=exc.status,
-        code=exc.code,
-        title=exc.title,
-        detail=exc.detail,
-        instance=request.url.path,
-        request_id=_request_id(request),
-        extra=exc.extra,
-    )
+    body = domain_error_body(exc, request.url.path, request_id_of(request))
+    return JSONResponse(body, status_code=exc.status, media_type=PROBLEM_MEDIA_TYPE)
 
 
 async def _validation_error_handler(request: Request, exc: Exception) -> JSONResponse:
@@ -90,7 +116,7 @@ async def _validation_error_handler(request: Request, exc: Exception) -> JSONRes
         title=spec.title,
         detail="One or more fields are invalid.",
         instance=request.url.path,
-        request_id=_request_id(request),
+        request_id=request_id_of(request),
         extra={"errors": errors},
     )
 
@@ -113,7 +139,7 @@ async def _http_error_handler(request: Request, exc: Exception) -> JSONResponse:
         title=title,
         detail=detail,
         instance=request.url.path,
-        request_id=_request_id(request),
+        request_id=request_id_of(request),
         headers=dict(exc.headers) if exc.headers else None,
     )
 

@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from app.cache.rate_cache import CachedRouteProvider, RouteCache
 from app.config import Settings
 from app.domain.errors import DomainError, ErrorCode
+from app.services.idempotency import IdempotencyService
 from app.services.rate_admin import RateAdminService
 from app.services.rate_engine import QuoteService
 from app.services.rate_repository import RateRepository
@@ -72,6 +73,18 @@ def get_rate_admin_service(
     return RateAdminService(session_factory, invalidate_cache=cache.invalidate)
 
 
+def get_idempotency_service(
+    session_factory: SessionFactoryDep, redis: RedisDep, settings: SettingsDep
+) -> IdempotencyService:
+    return IdempotencyService(
+        session_factory,
+        redis,
+        key_ttl=timedelta(seconds=settings.idempotency_ttl_seconds),
+        lock_ttl=timedelta(milliseconds=settings.idempotency_lock_ttl_ms),
+    )
+
+
+IdempotencyServiceDep = Annotated[IdempotencyService, Depends(get_idempotency_service)]
 QuoteServiceDep = Annotated[QuoteService, Depends(get_quote_service)]
 RateAdminServiceDep = Annotated[RateAdminService, Depends(get_rate_admin_service)]
 
