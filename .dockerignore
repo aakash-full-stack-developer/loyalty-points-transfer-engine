@@ -1,0 +1,17 @@
+.git
+.github
+.claude
+.env
+.venv
+venv
+**/__pycache__
+**/*.py[cod]
+*.egg-info
+.mypy_cache
+.ruff_cache
+.pytest_cache
+.hypothesis
+.coverage
+htmlcov
+docs
+project-instruction.md

@@ -1,0 +1,108 @@
+name: loyalty-engine
+
+# Settings shared by every service that runs the application image.
+# .env is optional here; hostnames are overridden so containers reach each other by service name.
+x-app: &app
+  build:
+    context: .
+    target: runtime
+  image: loyalty-engine:runtime
+  env_file:
+    - path: .env
+      required: false
+  environment: &app-env
+    DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-loyalty}:${POSTGRES_PASSWORD:-loyalty}@postgres:5432/${POSTGRES_DB:-loyalty}
+    REDIS_URL: redis://redis:6379/0
+    PARTNER_BASE_URL: http://partner-simulator:8001
+    LOG_JSON: "true"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-loyalty}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-loyalty}
+      POSTGRES_DB: ${POSTGRES_DB:-loyalty}
+    ports:
+      - "${POSTGRES_HOST_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "${REDIS_HOST_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  partner-simulator:
+    <<: *app
+    command: ["uvicorn", "partner_simulator.main:app", "--host", "0.0.0.0", "--port", "8001", "--no-access-log"]
+    ports:
+      - "${SIMULATOR_HOST_PORT:-8001}:8001"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health', timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    <<: *app
+    ports:
+      - "${API_HOST_PORT:-8000}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      partner-simulator:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/live', timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  worker:
+    <<: *app
+    command: ["python", "-m", "app.workers.reconciler"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      partner-simulator:
+        condition: service_healthy
+
+  # Dev tooling (tests, lint, typecheck, migrations). Source is mounted, so it always runs
+  # the current code without a rebuild. Only started by `docker compose run` (profile).
+  tools:
+    <<: *app
+    build:
+      context: .
+      target: dev
+    image: loyalty-engine:dev
+    profiles: ["tools"]
+    environment:
+      <<: *app-env
+      LOG_JSON: "false"
+    volumes:
+      - .:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      partner-simulator:
+        condition: service_healthy
+
+volumes:
+  postgres-data:
