@@ -46,6 +46,7 @@ class TransferFailureCode(StrEnum):
     PARTNER_REJECTED = "PARTNER_REJECTED"  # partner definitively refused the credit
     PARTNER_UNAVAILABLE = "PARTNER_UNAVAILABLE"  # request provably never reached the partner
     PARTNER_NOT_RECEIVED = "PARTNER_NOT_RECEIVED"  # reconciler: partner has no such credit
+    TRANSFER_INTERRUPTED = "TRANSFER_INTERRUPTED"  # crashed before the partner was called
     VERIFICATION_EXHAUSTED = "VERIFICATION_EXHAUSTED"  # reconciler gave up: manual review
 
 

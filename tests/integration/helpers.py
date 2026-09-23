@@ -1,11 +1,57 @@
-"""Helpers for integration tests that work directly with the ledger."""
+"""Helpers shared by integration tests: ledger access and API/simulator shortcuts."""
 
+import uuid
+from typing import Any
+
+import httpx
 from sqlalchemy import select, text
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.db.models import Account, Program
 from app.domain.enums import AccountType, OwnerType
 from app.domain.ids import new_transfer_id
+
+CARD_TO_AIRLINE = ("NOVA_REWARDS", "SKYWARD_MILES")
+
+
+async def transfer(
+    client: httpx.AsyncClient,
+    source: str = "NOVA_REWARDS",
+    destination: str = "SKYWARD_MILES",
+    points: int = 10_000,
+    *,
+    user: str = "user_alice",
+    key: str | None = None,
+) -> httpx.Response:
+    body = {"source_program": source, "destination_program": destination, "source_points": points}
+    return await client.post(
+        "/v1/transfers",
+        json=body,
+        headers={"X-User-Id": user, "Idempotency-Key": key or str(uuid.uuid4())},
+    )
+
+
+async def balances(client: httpx.AsyncClient, user: str = "user_alice") -> dict[str, int]:
+    response = await client.get("/v1/accounts", headers={"X-User-Id": user})
+    return {account["program"]: account["balance"] for account in response.json()["data"]}
+
+
+async def set_partner_mode(
+    simulator: httpx.AsyncClient, partner: str, mode: str, **extra: Any
+) -> None:
+    response = await simulator.post(
+        "/simulator/config", json={"partner_code": partner, "mode": mode, **extra}
+    )
+    assert response.status_code == 200
+
+
+async def partner_credits(simulator: httpx.AsyncClient) -> list[dict[str, Any]]:
+    return list((await simulator.get("/simulator/credits")).json())
+
+
+async def clearing_balance(factory: async_sessionmaker[AsyncSession], program: str) -> int:
+    async with factory() as session:
+        return (await system_account(session, program, AccountType.TRANSFER_CLEARING)).balance
 
 
 async def user_account(session: AsyncSession, user_id: str, program_code: str) -> Account:

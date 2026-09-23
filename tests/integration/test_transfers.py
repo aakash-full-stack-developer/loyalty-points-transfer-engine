@@ -5,8 +5,6 @@ points, whatever else it asserts.
 """
 
 import asyncio
-import uuid
-from collections.abc import AsyncIterator
 from typing import Any
 
 import httpx
@@ -17,67 +15,24 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.config import Settings
 from app.db.models import LedgerJournal, Transfer, User
-from app.domain.enums import AccountType
-from app.services.ledger_invariants import find_violations
 from tests.integration.conftest import running_app
-from tests.integration.helpers import system_account
+from tests.integration.helpers import (
+    CARD_TO_AIRLINE,
+    balances,
+    clearing_balance,
+    partner_credits,
+    set_partner_mode,
+    transfer,
+)
 
-pytestmark = pytest.mark.usefixtures("seeded", "simulator")
+pytestmark = pytest.mark.usefixtures("seeded", "simulator", "ledger_stays_consistent")
 
 Factory = async_sessionmaker[AsyncSession]
-CARD_TO_AIRLINE = ("NOVA_REWARDS", "SKYWARD_MILES")
-
-
-@pytest.fixture(autouse=True)
-async def ledger_stays_consistent(session_factory: Factory) -> AsyncIterator[None]:
-    yield
-    async with session_factory() as session:
-        assert await find_violations(session) == []
-
-
-async def transfer(
-    client: httpx.AsyncClient,
-    source: str = "NOVA_REWARDS",
-    destination: str = "SKYWARD_MILES",
-    points: int = 10_000,
-    *,
-    user: str = "user_alice",
-    key: str | None = None,
-) -> httpx.Response:
-    body = {"source_program": source, "destination_program": destination, "source_points": points}
-    return await client.post(
-        "/v1/transfers",
-        json=body,
-        headers={"X-User-Id": user, "Idempotency-Key": key or str(uuid.uuid4())},
-    )
-
-
-async def balances(client: httpx.AsyncClient, user: str = "user_alice") -> dict[str, int]:
-    response = await client.get("/v1/accounts", headers={"X-User-Id": user})
-    return {account["program"]: account["balance"] for account in response.json()["data"]}
-
-
-async def set_partner_mode(
-    simulator: httpx.AsyncClient, partner: str, mode: str, **extra: Any
-) -> None:
-    response = await simulator.post(
-        "/simulator/config", json={"partner_code": partner, "mode": mode, **extra}
-    )
-    assert response.status_code == 200
-
-
-async def partner_credits(simulator: httpx.AsyncClient) -> list[dict[str, Any]]:
-    return list((await simulator.get("/simulator/credits")).json())
 
 
 async def count(factory: Factory, model: type[Transfer] | type[LedgerJournal]) -> int:
     async with factory() as session:
         return await session.scalar(select(func.count()).select_from(model)) or 0
-
-
-async def clearing_balance(factory: Factory, program: str) -> int:
-    async with factory() as session:
-        return (await system_account(session, program, AccountType.TRANSFER_CLEARING)).balance
 
 
 def statuses(body: dict[str, Any]) -> list[str]:

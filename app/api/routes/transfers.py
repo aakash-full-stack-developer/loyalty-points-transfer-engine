@@ -7,8 +7,7 @@ or any other non-final state). Business errors (4xx) mean no transfer was create
 Reading someone else's transfer returns 404, not 403, so ids cannot be probed for existence.
 """
 
-import re
-from typing import Annotated, Any
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Request, status
 from fastapi.responses import JSONResponse
@@ -22,85 +21,32 @@ from app.api.deps import (
     enforce_transfer_rate_limit,
 )
 from app.api.idempotency import HandlerResult, IdempotencyKeyHeader, run_idempotent
+from app.api.presenters import (
+    TRANSFER_ID_PATTERN,
+    transfer_not_found,
+    transfer_out,
+    transfer_summary_out,
+)
 from app.api.schemas import (
     PROBLEM_RESPONSES,
     ProblemDetails,
-    RateSnapshotOut,
     TransferCreateRequest,
-    TransferDestinationOut,
-    TransferEventOut,
-    TransferFailureOut,
     TransferList,
     TransferOut,
-    TransferSourceOut,
-    TransferSummaryOut,
 )
 from app.domain.enums import TransferStatus
-from app.domain.errors import DomainError, ErrorCode
 from app.domain.transfer_state import FINAL_STATUSES
 from app.services.idempotency import compute_fingerprint
-from app.services.transfer_queries import (
-    TransferCursor,
-    TransferDetails,
-    get_transfer_details,
-    list_transfers,
-)
+from app.services.transfer_queries import TransferCursor, get_transfer_details, list_transfers
 from app.services.transfer_service import TransferRequest
 
 router = APIRouter(prefix="/v1/transfers", tags=["transfers"])
-
-_TRANSFER_ID = re.compile(r"tr_[0-9A-HJKMNP-TV-Z]{26}")
 
 
 def http_status_for(transfer_status: TransferStatus) -> int:
     if transfer_status in FINAL_STATUSES:
         return status.HTTP_201_CREATED
     return status.HTTP_202_ACCEPTED
-
-
-def _summary_fields(details: TransferDetails) -> dict[str, Any]:
-    transfer = details.transfer
-    return {
-        "id": transfer.id,
-        "status": transfer.status,
-        "source": TransferSourceOut(program=details.source_program, points=transfer.source_points),
-        "destination": TransferDestinationOut(
-            program=details.destination_program,
-            points=transfer.destination_points,
-            base_points=transfer.base_points,
-            bonus_points=transfer.bonus_points,
-        ),
-        "rate": RateSnapshotOut(**transfer.rate_snapshot),
-        "failure": (
-            TransferFailureOut(code=transfer.failure_code, message=transfer.failure_message)
-            if transfer.failure_code
-            else None
-        ),
-        "partner_confirmation_id": transfer.partner_confirmation_id,
-        "created_at": transfer.created_at,
-        "updated_at": transfer.updated_at,
-        "completed_at": transfer.completed_at,
-    }
-
-
-def transfer_out(details: TransferDetails) -> TransferOut:
-    return TransferOut(
-        **_summary_fields(details),
-        events=[
-            TransferEventOut(
-                from_status=event.from_status,
-                to_status=event.to_status,
-                reason=event.reason,
-                metadata=event.event_metadata,
-                created_at=event.created_at,
-            )
-            for event in details.events
-        ],
-    )
-
-
-def _not_found() -> DomainError:
-    return DomainError(ErrorCode.TRANSFER_NOT_FOUND, "No such transfer.")
 
 
 @router.post(
@@ -160,11 +106,11 @@ async def create_transfer(
 async def get_transfer(
     transfer_id: str, user_id: CurrentUserId, session: SessionDep
 ) -> TransferOut:
-    if not _TRANSFER_ID.fullmatch(transfer_id):
-        raise _not_found()
+    if not TRANSFER_ID_PATTERN.fullmatch(transfer_id):
+        raise transfer_not_found()
     details = await get_transfer_details(session, transfer_id, user_id)
     if details is None:
-        raise _not_found()
+        raise transfer_not_found()
     return transfer_out(details)
 
 
@@ -182,6 +128,6 @@ async def get_transfers(
     decoded = TransferCursor.decode(cursor) if cursor else None
     page, next_cursor = await list_transfers(session, user_id, limit, decoded)
     return TransferList(
-        data=[TransferSummaryOut(**_summary_fields(details)) for details in page],
+        data=[transfer_summary_out(details) for details in page],
         next_cursor=next_cursor,
     )

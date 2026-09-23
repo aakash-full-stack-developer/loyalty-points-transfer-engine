@@ -153,6 +153,14 @@ class TransferList(BaseModel):
     next_cursor: str | None
 
 
+class ReconcileOut(BaseModel):
+    result: str = Field(
+        description="COMPLETED, REVERSED, RETRY_SCHEDULED, MANUAL_REVIEW, NOT_DUE "
+        "or ALREADY_RESOLVED"
+    )
+    transfer: TransferOut
+
+
 # ---------------------------------------------------------------- admin
 class RateCreateRequest(RequestModel):
     source_program: ProgramCode

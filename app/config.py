@@ -6,9 +6,9 @@ here; they live in the database.
 """
 
 from functools import lru_cache
-from typing import Literal
+from typing import Literal, Self
 
-from pydantic import Field, PositiveFloat, PositiveInt, SecretStr
+from pydantic import Field, PositiveFloat, PositiveInt, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR"]
@@ -59,11 +59,36 @@ class Settings(BaseSettings):
     # Security
     admin_api_key: SecretStr = SecretStr("change-me-admin-key")
 
-    # Reconciliation of unknown partner outcomes
+    # Reconciliation of unknown partner outcomes (the worker)
     reconciliation_initial_delay_seconds: PositiveInt = 10
+    reconciler_interval_seconds: PositiveFloat = 5.0
+    reconciler_batch_size: PositiveInt = 50
+    reconciliation_lease_seconds: PositiveInt = 60
+    reconciliation_stuck_after_seconds: PositiveInt = 60
+    reconciliation_not_found_grace_seconds: PositiveInt = 60
+    reconciliation_max_attempts: PositiveInt = 5
+    reconciliation_backoff_base_seconds: PositiveInt = 10
+    reconciliation_backoff_max_seconds: PositiveInt = 600
 
     # Health checks
     health_check_timeout_seconds: PositiveFloat = 2.0
+
+    @model_validator(mode="after")
+    def _reconciliation_windows_outlast_partner_calls(self) -> Self:
+        """The reconciler may only treat a transfer as stuck, or a missing partner credit as
+        never received, once no partner request for it can still be in flight."""
+        deadline = self.partner_total_deadline_seconds
+        windows = ("reconciliation_stuck_after_seconds", "reconciliation_not_found_grace_seconds")
+        for name in windows:
+            if getattr(self, name) <= deadline:
+                raise ValueError(
+                    f"{name.upper()} must be greater than PARTNER_TOTAL_DEADLINE_SECONDS"
+                )
+        if self.reconciliation_lease_seconds <= deadline:
+            raise ValueError(
+                "RECONCILIATION_LEASE_SECONDS must be greater than PARTNER_TOTAL_DEADLINE_SECONDS"
+            )
+        return self
 
 
 @lru_cache

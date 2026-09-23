@@ -1,11 +1,17 @@
-"""Admin endpoints (X-Admin-Key required): rate versions and bonuses."""
+"""Admin endpoints (X-Admin-Key required): rate versions, bonuses, on-demand reconciliation."""
 
 from dataclasses import asdict
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, status
 
-from app.api.deps import RateAdminServiceDep, require_admin
+from app.api.deps import (
+    RateAdminServiceDep,
+    ReconciliationServiceDep,
+    SessionFactoryDep,
+    require_admin,
+)
+from app.api.presenters import TRANSFER_ID_PATTERN, transfer_not_found, transfer_out
 from app.api.schemas import (
     PROBLEM_RESPONSES,
     BonusCreateRequest,
@@ -15,9 +21,11 @@ from app.api.schemas import (
     RateCreateRequest,
     RateList,
     RateOut,
+    ReconcileOut,
 )
 from app.services.rate_admin import NewBonus, NewRate, RateVersion
 from app.services.rate_engine import utc_now
+from app.services.transfer_queries import get_transfer_details
 
 router = APIRouter(
     prefix="/v1/admin",
@@ -64,3 +72,28 @@ async def create_rate(body: RateCreateRequest, admin: RateAdminServiceDep) -> Ra
 async def create_bonus(body: BonusCreateRequest, admin: RateAdminServiceDep) -> BonusOut:
     bonus = await admin.create_bonus(NewBonus(**body.model_dump()), now=utc_now())
     return BonusOut(**asdict(bonus))
+
+
+@router.post(
+    "/transfers/{transfer_id}/reconcile",
+    summary="Reconcile one transfer now (asks the partner if the outcome is unknown)",
+    responses={404: {"model": ProblemDetails, "description": "Unknown transfer"}},
+)
+async def reconcile_transfer(
+    transfer_id: str,
+    reconciliation: ReconciliationServiceDep,
+    session_factory: SessionFactoryDep,
+) -> ReconcileOut:
+    """Skips the wait for next_verification_at, but never the safety windows: a transfer
+    that a live request may still own is reported as NOT_DUE and left alone."""
+    if not TRANSFER_ID_PATTERN.fullmatch(transfer_id):
+        raise transfer_not_found()
+    try:
+        result = await reconciliation.reconcile(transfer_id)
+    except LookupError as exc:
+        raise transfer_not_found() from exc
+    async with session_factory() as session:
+        details = await get_transfer_details(session, transfer_id, user_id=None)
+    if details is None:
+        raise transfer_not_found()
+    return ReconcileOut(result=result, transfer=transfer_out(details))

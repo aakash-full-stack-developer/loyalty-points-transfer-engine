@@ -21,6 +21,7 @@ from app.services.idempotency import IdempotencyService
 from app.services.rate_admin import RateAdminService
 from app.services.rate_engine import QuoteService
 from app.services.rate_repository import RateRepository
+from app.services.reconciliation import ReconciliationPolicy, ReconciliationService
 from app.services.transfer_service import TransferService
 
 
@@ -109,6 +110,19 @@ def get_transfer_service(
 
 
 TransferServiceDep = Annotated[TransferService, Depends(get_transfer_service)]
+
+
+def get_reconciliation_service(
+    session_factory: SessionFactoryDep,
+    partners: Annotated[PartnerRegistry, Depends(get_partner_registry)],
+    settings: SettingsDep,
+) -> ReconciliationService:
+    return ReconciliationService(
+        session_factory, partners, ReconciliationPolicy.from_settings(settings)
+    )
+
+
+ReconciliationServiceDep = Annotated[ReconciliationService, Depends(get_reconciliation_service)]
 QuoteServiceDep = Annotated[QuoteService, Depends(get_quote_service)]
 RateAdminServiceDep = Annotated[RateAdminService, Depends(get_rate_admin_service)]
 

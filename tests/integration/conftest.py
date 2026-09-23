@@ -28,6 +28,7 @@ from app.config import Settings
 from app.db.base import Base
 from app.db.session import create_engine, create_session_factory, unit_of_work
 from app.main import create_app
+from app.services.ledger_invariants import find_violations
 from scripts.seed import SeedReport, seed
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -155,3 +156,13 @@ async def clean_database(db_engine: AsyncEngine) -> None:
 async def seeded(session_factory: async_sessionmaker[AsyncSession]) -> SeedReport:
     async with unit_of_work(session_factory) as session:
         return await seed(session)
+
+
+@pytest.fixture
+async def ledger_stays_consistent(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> AsyncIterator[None]:
+    """Use in tests that move points: after the test, every ledger invariant must hold."""
+    yield
+    async with session_factory() as session:
+        assert await find_violations(session) == []

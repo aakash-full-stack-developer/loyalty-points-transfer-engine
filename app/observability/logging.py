@@ -54,3 +54,6 @@ def configure_logging(level: str = "INFO", json_logs: bool = False) -> None:
         uvicorn_logger.handlers.clear()
         uvicorn_logger.propagate = True
     logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+    # Partner calls are logged by our adapters with outcome and duration; httpx's own
+    # per-request line would only duplicate them.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
