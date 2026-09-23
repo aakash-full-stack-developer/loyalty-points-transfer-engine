@@ -20,10 +20,13 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
+import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Transfer, TransferEvent
 from app.domain.enums import TransferStatus
+
+logger = structlog.get_logger(__name__)
 
 S = TransferStatus
 
@@ -104,4 +107,11 @@ def transition(
             reason=reason,
             event_metadata=metadata or {},
         )
+    )
+    logger.info(
+        "transfer_status_changed",
+        transfer_id=transfer.id,
+        from_status=from_status,
+        to_status=to_status,
+        reason=reason,
     )

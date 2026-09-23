@@ -15,6 +15,8 @@ Failure modes (set per partner at runtime with POST /simulator/config):
 - timeout: the POST sleeps past the client timeout and applies nothing.
 - timeout_after_commit: the POST applies the credit, then sleeps past the client timeout.
   The client sees a timeout although the credit exists: the "unknown outcome" case.
+  Replays of an applied reference are just as slow, so client retries time out too and
+  only a later status check (the reconciler) can find the credit.
 - slow: the POST is delayed but answers within the client timeout.
 - reject: the POST is refused with 422 (for example an unknown member) and applies nothing.
 """
@@ -158,6 +160,9 @@ def create_app(state: SimulatorState | None = None) -> FastAPI:
                     409, "REFERENCE_CONFLICT", "Reference already used for a different credit"
                 )
             log.info("partner_credit_replayed", confirmation_id=existing.confirmation_id)
+            if config.mode == Mode.TIMEOUT_AFTER_COMMIT:
+                # A slow partner is slow for every request, replays included.
+                await asyncio.sleep(config.delay_ms / 1000)
             response.status_code = status.HTTP_200_OK
             response.headers["Idempotent-Replayed"] = "true"
             return CreditResponse.of(existing)

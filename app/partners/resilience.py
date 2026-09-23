@@ -36,6 +36,7 @@ from enum import StrEnum
 
 import structlog
 
+from app.observability import metrics
 from app.partners.base import (
     CreditOutcome,
     CreditStatus,
@@ -84,6 +85,7 @@ class CircuitBreaker:
         self._consecutive_failures = 0
         self._opened_at = 0.0
         self._trial_in_flight = False
+        metrics.record_breaker_state(name, self._state)
 
     @property
     def state(self) -> BreakerState:
@@ -131,6 +133,7 @@ class CircuitBreaker:
                 to_state=new_state,
             )
             self._state = new_state
+            metrics.record_breaker_state(self.name, new_state)
 
 
 class CircuitBreakerRegistry:
@@ -158,6 +161,17 @@ class CircuitBreakerRegistry:
 
 
 _CIRCUIT_OPEN = "circuit_open"
+
+
+def _record_attempt(partner: str, operation: str, outcome: str, duration: float) -> None:
+    metrics.PARTNER_REQUESTS.labels(partner=partner, operation=operation, outcome=outcome).inc()
+    metrics.PARTNER_REQUEST_DURATION.labels(partner=partner, operation=operation).observe(duration)
+
+
+def _count_fast_fail(partner: str, operation: str) -> None:
+    metrics.PARTNER_REQUESTS.labels(
+        partner=partner, operation=operation, outcome="CIRCUIT_OPEN"
+    ).inc()
 
 
 class ResilientPartnerAdapter(PartnerAdapter):
@@ -193,6 +207,7 @@ class ResilientPartnerAdapter(PartnerAdapter):
 
         while True:
             if not breaker.allow_request():
+                _count_fast_fail(partner_code, "credit")
                 result = PartnerCreditResult(CreditOutcome.NOT_SENT, _CIRCUIT_OPEN, retryable=False)
                 break
             remaining = deadline - self._clock()
@@ -203,7 +218,7 @@ class ResilientPartnerAdapter(PartnerAdapter):
                 break
 
             attempts += 1
-            started = self._clock()
+            started = time.perf_counter()
             try:
                 async with asyncio.timeout(remaining):
                     result = await self._inner.credit_points(
@@ -214,6 +229,8 @@ class ResilientPartnerAdapter(PartnerAdapter):
                 result = PartnerCreditResult(
                     CreditOutcome.UNKNOWN, "deadline_exceeded", retryable=False
                 )
+            duration = time.perf_counter() - started
+            _record_attempt(partner_code, "credit", result.outcome, duration)
 
             if result.outcome in (CreditOutcome.SUCCESS, CreditOutcome.REJECTED):
                 breaker.record_success()
@@ -221,12 +238,13 @@ class ResilientPartnerAdapter(PartnerAdapter):
                 breaker.record_failure()
             if result.outcome == CreditOutcome.UNKNOWN:
                 possibly_applied = True
+            # The member id is deliberately not logged; the reference identifies the credit.
             log.info(
                 "partner_credit_attempt",
                 attempt=attempts,
                 outcome=result.outcome,
                 reason=result.reason,
-                duration_ms=round((self._clock() - started) * 1000, 1),
+                duration_ms=round(duration * 1000, 1),
             )
 
             if not result.retryable or attempts >= self._retry.max_attempts:
@@ -253,12 +271,14 @@ class ResilientPartnerAdapter(PartnerAdapter):
 
         while True:
             if not breaker.allow_request():
+                _count_fast_fail(partner_code, "status")
                 result = PartnerStatusResult(CreditStatus.UNKNOWN, _CIRCUIT_OPEN, retryable=False)
                 break
             remaining = deadline - self._clock()
             if remaining <= 0:
                 break
             attempts += 1
+            started = time.perf_counter()
             try:
                 async with asyncio.timeout(remaining):
                     result = await self._inner.get_credit_status(partner_code, reference)
@@ -266,6 +286,7 @@ class ResilientPartnerAdapter(PartnerAdapter):
                 result = PartnerStatusResult(
                     CreditStatus.UNKNOWN, "deadline_exceeded", retryable=False
                 )
+            _record_attempt(partner_code, "status", result.status, time.perf_counter() - started)
 
             if result.status == CreditStatus.UNKNOWN:
                 breaker.record_failure()

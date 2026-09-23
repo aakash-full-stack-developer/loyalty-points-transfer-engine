@@ -50,4 +50,7 @@ COPY migrations ./migrations
 COPY scripts ./scripts
 USER app
 EXPOSE 8000
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-access-log"]
+# On SIGTERM uvicorn stops accepting connections, lets in-flight requests finish (up to 20 s)
+# and then runs the app lifespan shutdown (closes the DB pool, Redis and partner client).
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-access-log", \
+     "--timeout-graceful-shutdown", "20"]

@@ -11,6 +11,8 @@ from typing import Literal, Self
 from pydantic import Field, PositiveFloat, PositiveInt, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+DEFAULT_ADMIN_API_KEY = "change-me-admin-key"
+
 LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR"]
 Environment = Literal["local", "docker", "test", "production"]
 
@@ -56,8 +58,13 @@ class Settings(BaseSettings):
     rate_cache_ttl_seconds: PositiveInt = 60
     quote_ttl_seconds: PositiveInt = 60
 
+    # Transfers
+    max_transfer_points: PositiveInt = 1_000_000
+
     # Security
-    admin_api_key: SecretStr = SecretStr("change-me-admin-key")
+    admin_api_key: SecretStr = SecretStr(DEFAULT_ADMIN_API_KEY)
+    # Browser origins allowed to call the API. Empty (the default) disables CORS entirely.
+    cors_allow_origins: list[str] = Field(default_factory=list)
 
     # Reconciliation of unknown partner outcomes (the worker)
     reconciliation_initial_delay_seconds: PositiveInt = 10
@@ -69,6 +76,8 @@ class Settings(BaseSettings):
     reconciliation_max_attempts: PositiveInt = 5
     reconciliation_backoff_base_seconds: PositiveInt = 10
     reconciliation_backoff_max_seconds: PositiveInt = 600
+    # Port of the worker's own /metrics endpoint; 0 disables it.
+    reconciler_metrics_port: int = Field(default=9100, ge=0, le=65535)
 
     # Health checks
     health_check_timeout_seconds: PositiveFloat = 2.0
@@ -88,6 +97,15 @@ class Settings(BaseSettings):
             raise ValueError(
                 "RECONCILIATION_LEASE_SECONDS must be greater than PARTNER_TOTAL_DEADLINE_SECONDS"
             )
+        return self
+
+    @model_validator(mode="after")
+    def _no_default_secrets_in_production(self) -> Self:
+        if (
+            self.environment == "production"
+            and self.admin_api_key.get_secret_value() == DEFAULT_ADMIN_API_KEY
+        ):
+            raise ValueError("ADMIN_API_KEY must be changed from its default in production")
         return self
 
 

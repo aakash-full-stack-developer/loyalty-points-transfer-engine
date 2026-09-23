@@ -87,8 +87,8 @@ typecheck: ## Static type check with mypy (strict)
 	$(TOOLS_NODEPS) mypy
 
 # ---------------------------------------------------------------- Demo / local
-demo: ## End-to-end walkthrough against the running stack (added in step 9)
-	@echo "demo: not implemented yet (added in step 9)"
+demo: ## End-to-end walkthrough of every scenario against the running stack (run make up first)
+	$(TOOLS) python -m scripts.demo
 
 run-local: ## Run the API on the host with auto-reload (needs a venv; services via `make up`)
 	uvicorn app.main:app --reload --host 127.0.0.1 --port 8000

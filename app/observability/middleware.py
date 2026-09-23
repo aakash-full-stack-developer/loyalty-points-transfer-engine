@@ -56,7 +56,10 @@ class RequestContextMiddleware:
             if message["type"] == "http.response.start":
                 status_code = message["status"]
                 response_started = True
-                MutableHeaders(scope=message).append(REQUEST_ID_HEADER, request_id)
+                headers = MutableHeaders(scope=message)
+                headers.append(REQUEST_ID_HEADER, request_id)
+                # JSON only: stop browsers from guessing another content type.
+                headers.append("X-Content-Type-Options", "nosniff")
             await send(message)
 
         try:

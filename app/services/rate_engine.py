@@ -178,6 +178,16 @@ def ensure_route_usable(route: RouteConfig) -> RateRule:
     return route.rate
 
 
+def ensure_within_platform_limit(source_points: int, max_points: int | None) -> None:
+    """Platform-wide cap on a single transfer, on top of each route's own maximum."""
+    if max_points is not None and source_points > max_points:
+        raise DomainError(
+            ErrorCode.ABOVE_MAXIMUM,
+            f"A single transfer may not exceed {max_points} points.",
+            max_source_points=max_points,
+        )
+
+
 def ensure_different_programs(source_code: str, destination_code: str) -> None:
     if source_code == destination_code:
         raise DomainError(
@@ -202,14 +212,17 @@ class QuoteService:
         self,
         routes: RouteProvider,
         quote_ttl: timedelta,
+        max_transfer_points: int | None = None,
         clock: Callable[[], datetime] = utc_now,
     ) -> None:
         self._routes = routes
         self._quote_ttl = quote_ttl
+        self._max_transfer_points = max_transfer_points
         self._clock = clock
 
     async def quote(self, source_code: str, destination_code: str, source_points: int) -> Quote:
         ensure_different_programs(source_code, destination_code)
+        ensure_within_platform_limit(source_points, self._max_transfer_points)
         now = self._clock()
         route = await self._routes.get_route(source_code, destination_code, at=now)
         rate = ensure_route_usable(route)

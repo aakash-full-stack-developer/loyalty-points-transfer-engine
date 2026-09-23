@@ -5,10 +5,11 @@ from contextlib import asynccontextmanager
 
 import structlog
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from app import __version__
 from app.api.errors import register_exception_handlers
-from app.api.routes import accounts, admin, health, programs, quotes, transfers
+from app.api.routes import accounts, admin, health, metrics, programs, quotes, transfers
 from app.cache.redis import create_redis
 from app.config import Settings, get_settings
 from app.db.session import create_engine, create_session_factory
@@ -57,9 +58,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         lifespan=lifespan,
     )
     app.state.settings = settings
+    if settings.cors_allow_origins:
+        # Off by default: this is a server-to-server API. Enable only for known origins.
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=settings.cors_allow_origins,
+            allow_methods=["GET", "POST"],
+            allow_headers=["Content-Type", "Idempotency-Key", "X-User-Id", "X-Request-ID"],
+            expose_headers=["X-Request-ID", "Idempotent-Replayed", "Retry-After"],
+        )
     app.add_middleware(RequestContextMiddleware)
     register_exception_handlers(app)
     app.include_router(health.router)
+    app.include_router(metrics.router)
     app.include_router(programs.router)
     app.include_router(accounts.router)
     app.include_router(quotes.router)

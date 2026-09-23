@@ -185,7 +185,8 @@ class _FixedRoutes:
 
 
 async def test_quote_service_prices_route_and_sets_expiry() -> None:
-    service = QuoteService(_FixedRoutes(_route(make_rate())), timedelta(seconds=60), lambda: NOW)
+    routes = _FixedRoutes(_route(make_rate()))
+    service = QuoteService(routes, timedelta(seconds=60), clock=lambda: NOW)
 
     quote = await service.quote("NOVA_REWARDS", "SKYWARD_MILES", 5_000)
 
@@ -195,7 +196,7 @@ async def test_quote_service_prices_route_and_sets_expiry() -> None:
 
 async def test_quote_service_rejects_same_program_before_any_lookup() -> None:
     routes = _FixedRoutes(_route(make_rate()))
-    service = QuoteService(routes, timedelta(seconds=60), lambda: NOW)
+    service = QuoteService(routes, timedelta(seconds=60), clock=lambda: NOW)
 
     with pytest.raises(DomainError):
         await service.quote("NOVA_REWARDS", "NOVA_REWARDS", 5_000)

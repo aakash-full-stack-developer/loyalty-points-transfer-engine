@@ -26,6 +26,7 @@ Locking order, in every saga transaction: the transfer row first, then every acc
 transaction changes, in ascending id order. One global order means no deadlocks.
 """
 
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -43,6 +44,7 @@ from app.domain.enums import AccountType, JournalType, TransferStatus
 from app.domain.errors import DomainError, ErrorCode
 from app.domain.ids import new_transfer_id
 from app.domain.transfer_state import TransferFailureCode, record_creation, transition
+from app.observability import metrics
 from app.partners.base import CreditOutcome, PartnerCreditResult
 from app.partners.registry import PartnerRegistry
 from app.services.ledger import (
@@ -56,6 +58,7 @@ from app.services.rate_engine import (
     calculate_conversion,
     ensure_different_programs,
     ensure_route_usable,
+    ensure_within_platform_limit,
 )
 from app.services.rate_repository import RateRepository
 
@@ -87,11 +90,13 @@ class TransferService:
         session_factory: async_sessionmaker[AsyncSession],
         partners: PartnerRegistry,
         verification_delay: timedelta,
+        max_transfer_points: int | None = None,
         clock: Callable[[], datetime] = utc_now,
     ) -> None:
         self._session_factory = session_factory
         self._partners = partners
         self._verification_delay = verification_delay
+        self._max_transfer_points = max_transfer_points
         self._clock = clock
 
     async def create_transfer(
@@ -100,6 +105,8 @@ class TransferService:
         """Run the saga; return the transfer id. Business errors raise DomainError and leave
         nothing behind (the debit transaction rolls back)."""
         ensure_different_programs(request.source_program, request.destination_program)
+        ensure_within_platform_limit(request.source_points, self._max_transfer_points)
+        started = time.perf_counter()
         try:
             debited = await self._debit_source(user_id, request, idempotency_key)
         except IntegrityError as exc:
@@ -127,7 +134,12 @@ class TransferService:
             points=debited.destination_points,
         )
 
-        await self._apply_partner_outcome(debited.transfer_id, result)
+        status = await self._apply_partner_outcome(debited.transfer_id, result)
+        metrics.TRANSFERS.labels(
+            status=status,
+            route=metrics.route_label(request.source_program, request.destination_program),
+        ).inc()
+        metrics.TRANSFER_DURATION.labels(status=status).observe(time.perf_counter() - started)
         return debited.transfer_id
 
     # ------------------------------------------------------------ step 1: debit
@@ -250,7 +262,10 @@ class TransferService:
 
     # ------------------------------------------------------------ step 4: outcome
 
-    async def _apply_partner_outcome(self, transfer_id: str, result: PartnerCreditResult) -> None:
+    async def _apply_partner_outcome(
+        self, transfer_id: str, result: PartnerCreditResult
+    ) -> TransferStatus:
+        """Record the partner's answer; return the transfer's resulting status."""
         now = self._clock()
         metadata: dict[str, Any] = {
             "partner_outcome": result.outcome,
@@ -266,7 +281,7 @@ class TransferService:
                 # Another actor (the reconciler, an admin) already moved it on. Never apply
                 # an outcome twice.
                 logger.warning("partner_outcome_ignored", current_status=transfer.status)
-                return
+                return TransferStatus(transfer.status)
 
             if result.outcome == CreditOutcome.SUCCESS and result.confirmation_id:
                 await settle_transfer(
@@ -302,6 +317,7 @@ class TransferService:
                     metadata,
                     now,
                 )
+            return TransferStatus(transfer.status)
 
 
 # ---------------------------------------------------------------- shared saga steps

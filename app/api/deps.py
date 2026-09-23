@@ -6,6 +6,7 @@ from collections.abc import AsyncIterator
 from datetime import timedelta
 from typing import Annotated, cast
 
+import structlog
 from fastapi import Depends, Header, Request
 from redis.asyncio import Redis
 from sqlalchemy import select
@@ -16,6 +17,7 @@ from app.cache.rate_limiter import FixedWindowRateLimiter
 from app.config import Settings
 from app.db.models import User
 from app.domain.errors import DomainError, ErrorCode
+from app.observability import metrics
 from app.partners.registry import PartnerRegistry
 from app.services.idempotency import IdempotencyService
 from app.services.rate_admin import RateAdminService
@@ -70,6 +72,7 @@ def get_quote_service(
     return QuoteService(
         routes=CachedRouteProvider(RateRepository(session), cache),
         quote_ttl=timedelta(seconds=settings.quote_ttl_seconds),
+        max_transfer_points=settings.max_transfer_points,
     )
 
 
@@ -106,6 +109,7 @@ def get_transfer_service(
         session_factory,
         partners,
         verification_delay=timedelta(seconds=settings.reconciliation_initial_delay_seconds),
+        max_transfer_points=settings.max_transfer_points,
     )
 
 
@@ -148,6 +152,8 @@ async def get_current_user_id(
         exists = await session.scalar(select(User.id).where(User.id == x_user_id))
     if exists is None:
         raise DomainError(ErrorCode.AUTHENTICATION_REQUIRED, "Unknown user.")
+    # Every log line for the rest of this request carries the user id.
+    structlog.contextvars.bind_contextvars(user_id=x_user_id)
     return x_user_id
 
 
@@ -166,6 +172,7 @@ async def enforce_transfer_rate_limit(
     )
     decision = await limiter.hit(user_id)
     if not decision.allowed:
+        metrics.RATE_LIMIT_REJECTIONS.inc()
         raise DomainError(
             ErrorCode.RATE_LIMITED,
             f"At most {decision.limit} transfers per {settings.rate_limit_window_seconds} s.",

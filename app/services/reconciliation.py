@@ -44,14 +44,16 @@ from enum import StrEnum
 from typing import Any
 
 import structlog
-from sqlalchemy import and_, or_, select, update
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.orm import aliased
 
 from app.config import Settings
 from app.db.models import Program, Transfer
 from app.db.session import unit_of_work
 from app.domain.enums import TransferStatus
 from app.domain.transfer_state import TransferFailureCode, transition
+from app.observability import metrics
 from app.partners.base import CreditStatus, PartnerStatusResult
 from app.partners.registry import PartnerRegistry
 from app.services.transfer_service import lock_transfer, reverse_transfer, settle_transfer
@@ -70,6 +72,24 @@ class ReconcileResult(StrEnum):
     MANUAL_REVIEW = "MANUAL_REVIEW"
     NOT_DUE = "NOT_DUE"  # too young to touch safely (a live request may own it)
     ALREADY_RESOLVED = "ALREADY_RESOLVED"  # final, in manual review, or moved on meanwhile
+
+
+# Results that move a transfer into an outcome state (counted in transfers_total).
+_OUTCOME_RESULTS = frozenset(
+    {ReconcileResult.COMPLETED, ReconcileResult.REVERSED, ReconcileResult.MANUAL_REVIEW}
+)
+
+
+async def count_backlog(session: AsyncSession) -> dict[TransferStatus, int]:
+    """Transfers waiting on verification or an operator (for the backlog gauges)."""
+    rows = await session.execute(
+        select(Transfer.status, func.count())
+        .where(Transfer.status.in_([S.PENDING_VERIFICATION, S.MANUAL_REVIEW]))
+        .group_by(Transfer.status)
+    )
+    counts = {S.PENDING_VERIFICATION: 0, S.MANUAL_REVIEW: 0}
+    counts.update({S(status): count for status, count in rows.tuples()})
+    return counts
 
 
 @dataclass(frozen=True)
@@ -106,6 +126,7 @@ class _Snapshot:
     created_at: datetime
     partner_code: str
     reference: str
+    route: str  # "SOURCE->DESTINATION", for metrics
 
 
 def utc_now() -> datetime:
@@ -178,8 +199,15 @@ class ReconciliationService:
 
     async def reconcile(self, transfer_id: str) -> ReconcileResult:
         """Resolve one transfer if it is safe to do so (also used by the admin endpoint)."""
-        log = logger.bind(transfer_id=transfer_id)
         snapshot = await self._snapshot(transfer_id)
+        result = await self._reconcile(transfer_id, snapshot)
+        metrics.RECONCILIATION_RESOLVED.labels(result=result).inc()
+        if result in _OUTCOME_RESULTS:
+            metrics.TRANSFERS.labels(status=result, route=snapshot.route).inc()
+        return result
+
+    async def _reconcile(self, transfer_id: str, snapshot: _Snapshot) -> ReconcileResult:
+        log = logger.bind(transfer_id=transfer_id)
         now = self._clock()
 
         if snapshot.status not in (*_STUCK_STATUSES, S.PENDING_VERIFICATION):
@@ -205,23 +233,33 @@ class ReconciliationService:
         return await self._apply(transfer_id, partner_status, log)
 
     async def _snapshot(self, transfer_id: str) -> _Snapshot:
+        source, destination = aliased(Program), aliased(Program)
         async with self._session_factory() as session:
             row = (
                 await session.execute(
                     select(
                         Transfer.status,
                         Transfer.created_at,
-                        Program.partner_code,
+                        destination.partner_code,
                         Transfer.partner_reference,
+                        source.code,
+                        destination.code,
                     )
-                    .join(Program, Program.id == Transfer.destination_program_id)
+                    .join(source, source.id == Transfer.source_program_id)
+                    .join(destination, destination.id == Transfer.destination_program_id)
                     .where(Transfer.id == transfer_id)
                 )
             ).one_or_none()
         if row is None:
             raise LookupError(f"transfer {transfer_id} does not exist")
-        status, created_at, partner_code, reference = row
-        return _Snapshot(S(status), created_at, partner_code, reference or transfer_id)
+        status, created_at, partner_code, reference, source_code, destination_code = row
+        return _Snapshot(
+            S(status),
+            created_at,
+            partner_code,
+            reference or transfer_id,
+            metrics.route_label(source_code, destination_code),
+        )
 
     async def _reverse_interrupted(
         self, transfer_id: str, log: structlog.typing.FilteringBoundLogger

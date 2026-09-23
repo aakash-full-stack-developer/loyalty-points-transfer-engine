@@ -90,6 +90,24 @@ async def test_timeout_after_commit_is_unknown_but_partner_has_the_credit(
     assert status.status == CreditStatus.COMPLETED
 
 
+async def test_retrying_an_applied_reference_returns_the_original_confirmation(
+    simulator: httpx.AsyncClient, adapter: HttpPartnerAdapter
+) -> None:
+    """Once the partner answers again, a retry of the same reference is a safe replay:
+    the original confirmation, and still one credit."""
+    await set_mode(simulator, "timeout_after_commit", delay_ms=1_500)
+    first = await adapter.credit_points("SKYWARD", "tr_replay", MEMBER, 1_000)
+    await set_mode(simulator, "success")
+
+    retry = await adapter.credit_points("SKYWARD", "tr_replay", MEMBER, 1_000)
+    status = await adapter.get_credit_status("SKYWARD", "tr_replay")
+
+    assert first.outcome == CreditOutcome.UNKNOWN
+    assert retry.outcome == CreditOutcome.SUCCESS
+    assert retry.confirmation_id == status.confirmation_id
+    assert len((await simulator.get("/simulator/credits")).json()) == 1
+
+
 async def test_unreachable_partner_is_not_sent() -> None:
     client = build_http_client("http://127.0.0.1:1", connect_timeout=0.5, read_timeout=0.5)
     async with client:

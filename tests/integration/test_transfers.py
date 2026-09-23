@@ -198,17 +198,17 @@ async def test_timeout_after_commit_without_retries_is_pending_although_partner_
     assert len(await partner_credits(simulator)) == 1  # the reconciler will complete it
 
 
-async def test_retry_after_timeout_after_commit_finds_the_credit_via_idempotent_replay(
+async def test_retries_against_a_slow_partner_stay_pending_and_never_double_credit(
     client: httpx.AsyncClient, simulator: httpx.AsyncClient
 ) -> None:
-    """Attempt 1 is applied but times out; attempt 2 reuses the reference and the partner
-    answers with the original credit. The unknown outcome resolves itself, safely."""
+    """Every attempt times out (the partner is slow even on replays), so the transfer waits
+    for verification. The retries reused the reference: the partner holds one credit."""
     await set_partner_mode(simulator, "SKYWARD", "timeout_after_commit", delay_ms=2_500)
 
     response = await transfer(client, *CARD_TO_AIRLINE, 10_000)
 
     body = response.json()
-    assert (response.status_code, body["status"]) == (201, "COMPLETED")
+    assert (response.status_code, body["status"]) == (202, "PENDING_VERIFICATION")
     assert body["events"][-1]["metadata"]["attempts"] == 2
     assert len(await partner_credits(simulator)) == 1
 

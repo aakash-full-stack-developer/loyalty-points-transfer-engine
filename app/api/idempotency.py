@@ -24,6 +24,7 @@ from fastapi.responses import JSONResponse
 
 from app.api.errors import PROBLEM_MEDIA_TYPE, domain_error_body, request_id_of
 from app.domain.errors import DomainError, ErrorCode
+from app.observability import metrics
 from app.services.idempotency import (
     BeginOutcome,
     IdempotencyService,
@@ -77,14 +78,17 @@ async def run_idempotent(
     if begin.outcome == BeginOutcome.REPLAY:
         if begin.status_code is None:
             raise RuntimeError("completed idempotency record has no status code")
-        logger.info("idempotent_replay", user_id=user_id, status_code=begin.status_code)
+        logger.info("idempotent_replay", status_code=begin.status_code)
+        metrics.IDEMPOTENT_REPLAYS.inc()
         return _response(begin.status_code, begin.body, replayed=True)
     if begin.outcome == BeginOutcome.CONFLICT_MISMATCH:
+        metrics.IDEMPOTENCY_CONFLICTS.labels(reason="key_reused").inc()
         raise DomainError(
             ErrorCode.IDEMPOTENCY_KEY_REUSED,
             "This Idempotency-Key was used with a different request. Use a new key.",
         )
     if begin.outcome == BeginOutcome.CONFLICT_IN_PROGRESS:
+        metrics.IDEMPOTENCY_CONFLICTS.labels(reason="in_progress").inc()
         raise DomainError(
             ErrorCode.IDEMPOTENCY_REQUEST_IN_PROGRESS,
             "A request with this Idempotency-Key is still being processed. Retry shortly.",

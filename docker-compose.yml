@@ -74,6 +74,10 @@ services:
   worker:
     <<: *app
     command: ["python", "-m", "app.workers.reconciler"]
+    # Stop gracefully: SIGTERM lets the worker finish the transfer it is resolving.
+    stop_grace_period: 30s
+    ports:
+      - "${WORKER_METRICS_HOST_PORT:-9100}:9100"
     depends_on:
       postgres:
         condition: service_healthy

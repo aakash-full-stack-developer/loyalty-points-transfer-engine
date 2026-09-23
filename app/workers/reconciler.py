@@ -15,13 +15,20 @@ import contextlib
 import signal
 
 import structlog
+from prometheus_client import start_http_server
 
 from app.config import Settings, get_settings
 from app.db.session import create_engine, create_session_factory
+from app.domain.enums import TransferStatus
+from app.observability import metrics
 from app.observability.logging import configure_logging
 from app.partners.registry import build_partner_client, build_partner_registry
 from app.partners.resilience import CircuitBreakerRegistry
-from app.services.reconciliation import ReconciliationPolicy, ReconciliationService
+from app.services.reconciliation import (
+    ReconciliationPolicy,
+    ReconciliationService,
+    count_backlog,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -33,15 +40,20 @@ async def run(settings: Settings, stop: asyncio.Event) -> None:
         failure_threshold=settings.circuit_breaker_failure_threshold,
         cooldown_seconds=settings.circuit_breaker_cooldown_seconds,
     )
+    session_factory = create_session_factory(engine)
     service = ReconciliationService(
-        create_session_factory(engine),
+        session_factory,
         build_partner_registry(settings, partner_client, breakers),
         ReconciliationPolicy.from_settings(settings),
     )
+    if settings.reconciler_metrics_port:
+        # The worker has no HTTP API, so it serves its own Prometheus endpoint.
+        start_http_server(settings.reconciler_metrics_port)
     logger.info(
         "reconciler_started",
         interval_seconds=settings.reconciler_interval_seconds,
         batch_size=settings.reconciler_batch_size,
+        metrics_port=settings.reconciler_metrics_port or None,
     )
     try:
         while not stop.is_set():
@@ -50,6 +62,12 @@ async def run(settings: Settings, stop: asyncio.Event) -> None:
                 if summary:
                     counts = {result.value: count for result, count in summary.items()}
                     logger.info("reconciliation_round_finished", **counts)
+                async with session_factory() as session:
+                    backlog = await count_backlog(session)
+                metrics.TRANSFERS_PENDING_VERIFICATION.set(
+                    backlog[TransferStatus.PENDING_VERIFICATION]
+                )
+                metrics.TRANSFERS_MANUAL_REVIEW.set(backlog[TransferStatus.MANUAL_REVIEW])
             except Exception:
                 logger.exception("reconciliation_round_failed")
             # Sleep until the next tick, waking immediately on shutdown.
