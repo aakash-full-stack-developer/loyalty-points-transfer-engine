@@ -1,0 +1,28 @@
+sequenceDiagram
+    autonumber
+    participant C as Client
+    participant A as API
+    participant R as Redis
+    participant DB as PostgreSQL
+    participant P as Partner API
+
+    C->>A: POST /v1/transfers (X-User-Id, Idempotency-Key)
+    A->>R: rate limit: INCR window counter
+    A->>R: idempotency lock: SET NX PX
+    A->>DB: idempotency_keys row, status IN_PROGRESS
+    Note over A,DB: TX 1 (debit)
+    A->>DB: read the active rate and bonus, compute the quote
+    A->>DB: lock source + clearing accounts (FOR NO KEY UPDATE), check balance
+    A->>DB: insert transfer, TRANSFER_DEBIT journal (user source -> clearing)
+    A->>DB: status SOURCE_DEBITED, COMMIT
+    Note over A,DB: TX 2: status PARTNER_SUBMITTED, COMMIT
+    A->>P: POST credit (reference = transfer id, member id, points)
+    Note over A,P: no transaction or row lock is held during the call
+    P-->>A: 201 confirmation_id
+    Note over A,DB: TX 3 (settle)
+    A->>DB: lock transfer, then accounts in id order
+    A->>DB: TRANSFER_SETTLE journal (clearing -> source settlement, destination settlement -> user)
+    A->>DB: status COMPLETED, COMMIT
+    A->>DB: idempotency_keys: COMPLETED with the response
+    A->>R: release lock (compare-and-delete)
+    A-->>C: 201 transfer: status COMPLETED, events timeline

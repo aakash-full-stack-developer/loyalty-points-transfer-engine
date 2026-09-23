@@ -1,0 +1,100 @@
+erDiagram
+    users ||--o{ accounts : owns
+    programs ||--o{ accounts : "denominated in"
+    programs ||--o{ conversion_rates : "source or destination"
+    programs ||--o{ transfer_bonuses : "source or destination"
+    users ||--o{ transfers : requests
+    accounts ||--o{ transfers : "source or destination"
+    conversion_rates ||--o{ transfers : "priced with"
+    transfers ||--o{ transfer_events : "status timeline"
+    transfers ||--o{ ledger_journals : "debit, settle, reversal"
+    ledger_journals ||--|{ ledger_entries : contains
+    accounts ||--o{ ledger_entries : "posted to"
+    users ||--o{ idempotency_keys : sends
+    transfers |o--o{ idempotency_keys : "stored response of"
+
+    programs {
+        bigint id PK
+        varchar code UK "NOVA_REWARDS, SKYWARD_MILES, ..."
+        varchar type "CARD or LOYALTY"
+        varchar partner_code "adapter key"
+        boolean active
+    }
+    conversion_rates {
+        bigint id PK
+        bigint source_program_id FK
+        bigint destination_program_id FK
+        bigint numerator "destination per source"
+        bigint denominator
+        bigint min_source_points
+        bigint source_increment
+        bigint max_source_points "nullable"
+        int version "unique per route"
+        timestamptz effective_from
+        timestamptz effective_to "null = current"
+    }
+    transfer_bonuses {
+        bigint id PK
+        int bonus_bps "1 to 10000"
+        timestamptz starts_at
+        timestamptz ends_at "no overlap per route"
+    }
+    users {
+        varchar id PK
+    }
+    accounts {
+        bigint id PK
+        varchar owner_type "USER or SYSTEM"
+        varchar user_id FK "null for SYSTEM"
+        bigint program_id FK
+        varchar account_type "USER_BALANCE, TRANSFER_CLEARING, PARTNER_SETTLEMENT"
+        varchar external_member_id "partner member id"
+        bigint balance "CHECK >= 0 for USER"
+    }
+    ledger_journals {
+        bigint id PK
+        varchar journal_type "SEED, TRANSFER_DEBIT, TRANSFER_SETTLE, TRANSFER_REVERSAL"
+        varchar transfer_id FK "unique with journal_type"
+    }
+    ledger_entries {
+        bigint id PK
+        bigint journal_id FK
+        bigint account_id FK "with program_id: composite FK"
+        bigint program_id
+        varchar direction "DEBIT or CREDIT"
+        bigint amount "CHECK > 0"
+    }
+    transfers {
+        varchar id PK "tr_ + ULID, also the partner reference"
+        varchar user_id FK
+        varchar idempotency_key "unique per user"
+        bigint source_points
+        bigint base_points
+        bigint bonus_points
+        bigint destination_points
+        bigint rate_id FK
+        jsonb rate_snapshot
+        varchar status
+        varchar failure_code
+        varchar partner_confirmation_id
+        int verification_attempts
+        timestamptz next_verification_at
+    }
+    transfer_events {
+        bigint id PK
+        varchar transfer_id FK
+        varchar from_status
+        varchar to_status
+        varchar reason
+        jsonb metadata
+    }
+    idempotency_keys {
+        bigint id PK
+        varchar user_id FK "unique with key"
+        varchar key
+        varchar request_fingerprint "SHA-256"
+        varchar status "IN_PROGRESS or COMPLETED"
+        int response_status_code
+        jsonb response_body
+        timestamptz expires_at
+    }

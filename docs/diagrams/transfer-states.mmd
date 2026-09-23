@@ -1,0 +1,14 @@
+stateDiagram-v2
+    [*] --> PENDING: request accepted
+    PENDING --> SOURCE_DEBITED: debit committed (same transaction)
+    SOURCE_DEBITED --> PARTNER_SUBMITTED: about to call the partner
+    SOURCE_DEBITED --> REVERSED: reconciler, crashed before the partner call
+    PARTNER_SUBMITTED --> COMPLETED: partner confirmed (API or reconciler)
+    PARTNER_SUBMITTED --> REVERSED: rejected, not sent, or reconciler found no credit
+    PARTNER_SUBMITTED --> PENDING_VERIFICATION: outcome unknown
+    PENDING_VERIFICATION --> COMPLETED: reconciler, partner has the credit
+    PENDING_VERIFICATION --> REVERSED: reconciler, no credit after the grace period
+    PENDING_VERIFICATION --> MANUAL_REVIEW: partner unreachable, attempts exhausted
+    COMPLETED --> [*]
+    REVERSED --> [*]
+    MANUAL_REVIEW --> [*]: operator decides

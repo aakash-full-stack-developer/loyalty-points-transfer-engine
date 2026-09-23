@@ -13,7 +13,7 @@ TOOLS ?= $(COMPOSE) run --rm --user "$$(id -u):$$(id -g)" tools
 TOOLS_NODEPS ?= $(COMPOSE) run --rm --no-deps --user "$$(id -u):$$(id -g)" tools
 
 .PHONY: help up down logs ps build shell migrate makemigration seed check-invariants cleanup-idempotency psql reset test test-unit \
-	test-integration coverage lint format typecheck demo run-local
+	test-integration coverage lint format typecheck diagrams demo run-local
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*## "; printf "Usage: make <target>\n\nTargets:\n"} \
@@ -85,6 +85,19 @@ format: ## Auto-fix lint issues and format code with ruff
 
 typecheck: ## Static type check with mypy (strict)
 	$(TOOLS_NODEPS) mypy
+
+# ---------------------------------------------------------------- Docs
+MERMAID_CLI ?= npx -y @mermaid-js/mermaid-cli@11.4.2
+
+diagrams: ## Render docs/diagrams/*.mmd to SVG and PNG in docs/images/ (needs Node.js 18+)
+	@command -v npx >/dev/null || (echo "npx not found: install Node.js 18+ to render diagrams" && exit 1)
+	@mkdir -p docs/images
+	@for source in docs/diagrams/*.mmd; do \
+		name=$$(basename $$source .mmd); \
+		echo "rendering $$name"; \
+		$(MERMAID_CLI) -q -i $$source -o docs/images/$$name.svg -b white || exit 1; \
+		$(MERMAID_CLI) -q -i $$source -o docs/images/$$name.png -b white -s 2 || exit 1; \
+	done
 
 # ---------------------------------------------------------------- Demo / local
 demo: ## End-to-end walkthrough of every scenario against the running stack (run make up first)

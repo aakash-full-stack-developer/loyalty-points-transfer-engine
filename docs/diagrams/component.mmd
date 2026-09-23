@@ -1,0 +1,50 @@
+flowchart LR
+    client(["API client"])
+
+    subgraph api["API service (FastAPI, uvicorn)"]
+        mw["Middleware<br/>X-Request-ID, JSON logs,<br/>RFC 7807 errors"]
+        routes["Routes /v1/*"]
+        limiter["Rate limiter<br/>fixed window, per user"]
+        idem["Idempotency layer"]
+        quotes["Quote service"]
+        saga["Transfer service<br/>(saga)"]
+        engine["Rate engine<br/>pure integer math"]
+        ledger["Ledger<br/>double entry"]
+        adapters["Partner registry<br/>retry + backoff, circuit breaker,<br/>deadline, HTTP adapter"]
+    end
+
+    subgraph worker["Reconciler worker"]
+        recon["Reconciliation service"]
+        wadapters["Partner registry<br/>(own breakers)"]
+    end
+
+    pg[("PostgreSQL 16<br/>source of truth")]
+    redis[("Redis 7<br/>ephemeral only")]
+    partner["Partner APIs<br/>(partner simulator)"]
+    prom["Prometheus"]
+
+    client -->|"JSON over HTTP<br/>X-User-Id, Idempotency-Key"| mw
+    mw --> routes
+    routes --> limiter
+    limiter -->|"INCR per-window counter"| redis
+    routes --> idem
+    idem -->|"SET NX PX lock"| redis
+    idem -->|"idempotency_keys row<br/>(the guarantee)"| pg
+    idem --> saga
+    routes --> quotes
+    quotes -->|"route config, TTL cache"| redis
+    quotes -->|"cache miss or Redis down"| pg
+    quotes --> engine
+    saga --> engine
+    saga -->|"rates read inside the debit transaction"| pg
+    saga --> ledger
+    ledger -->|"short transactions,<br/>row locks in id order"| pg
+    saga -->|"credit, reference = transfer id<br/>(no transaction open)"| adapters
+    adapters -->|"POST /partners/{code}/credits"| partner
+
+    recon -->|"claim: FOR UPDATE SKIP LOCKED + lease<br/>settle / reverse journals"| pg
+    recon --> wadapters
+    wadapters -->|"GET /partners/{code}/credits/{reference}"| partner
+
+    prom -->|"scrape /metrics"| mw
+    prom -->|"scrape :9100/metrics"| recon

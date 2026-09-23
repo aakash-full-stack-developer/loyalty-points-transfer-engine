@@ -1,0 +1,34 @@
+sequenceDiagram
+    autonumber
+    participant C as Client
+    participant A as API
+    participant DB as PostgreSQL
+    participant P as Partner API
+    participant W as Reconciler worker
+
+    Note over A,DB: TX 1 (debit) and TX 2 (PARTNER_SUBMITTED) as in the success path
+    A->>P: POST credit (reference = transfer id)
+    alt definitive failure: 4xx rejection, connection refused, circuit open
+        P-->>A: 422 MEMBER_NOT_FOUND (or never reached)
+        A->>DB: TX 3: TRANSFER_REVERSAL (clearing -> user source), status REVERSED
+        A-->>C: 201 status REVERSED, failure PARTNER_REJECTED / PARTNER_UNAVAILABLE
+    else outcome unknown: timeout or 5xx after retries
+        P--xA: no answer within the deadline
+        A->>DB: TX 3: status PENDING_VERIFICATION, next_verification_at
+        A-->>C: 202 status PENDING_VERIFICATION (points held in clearing)
+        loop every RECONCILER_INTERVAL_SECONDS
+            W->>DB: claim due transfers (FOR UPDATE SKIP LOCKED) and lease them
+        end
+        W->>P: GET credit by reference (no transaction open)
+        alt partner has the credit
+            P-->>W: 200 confirmation_id
+            W->>DB: TRANSFER_SETTLE, status COMPLETED
+        else partner has no credit and the grace period has passed
+            P-->>W: 404
+            W->>DB: TRANSFER_REVERSAL, status REVERSED (PARTNER_NOT_RECEIVED)
+        else not found yet (inside the grace period)
+            W->>DB: check again soon (not a failed attempt)
+        else partner unreachable
+            W->>DB: exponential backoff, after max attempts status MANUAL_REVIEW
+        end
+    end
