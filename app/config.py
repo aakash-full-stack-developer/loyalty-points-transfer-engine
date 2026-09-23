@@ -54,6 +54,7 @@ class Settings(BaseSettings):
     idempotency_ttl_seconds: PositiveInt = 86_400
     idempotency_lock_ttl_ms: PositiveInt = 30_000
     rate_cache_ttl_seconds: PositiveInt = 60
+    quote_ttl_seconds: PositiveInt = 60
 
     # Security
     admin_api_key: SecretStr = SecretStr("change-me-admin-key")

@@ -16,9 +16,11 @@ import asyncpg
 import pytest
 from alembic import command
 from alembic.config import Config as AlembicConfig
+from redis.asyncio import Redis
 from sqlalchemy import make_url, text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from app.cache.redis import create_redis
 from app.config import Settings
 from app.db.base import Base
 from app.db.session import create_engine, create_session_factory, unit_of_work
@@ -68,9 +70,26 @@ def test_database_url() -> str:
     return database_url
 
 
+def _test_redis_url() -> str:
+    """Integration tests use Redis logical database 1, so they never touch the dev cache (0)."""
+    explicit = os.environ.get("TEST_REDIS_URL")
+    if explicit:
+        return explicit
+    base = Settings().redis_url
+    return re.sub(r"/\d+$", "", base) + "/1"
+
+
 @pytest.fixture
 def settings(test_database_url: str) -> Settings:
-    return Settings(environment="test", database_url=test_database_url)
+    return Settings(environment="test", database_url=test_database_url, redis_url=_test_redis_url())
+
+
+@pytest.fixture(autouse=True)
+async def clean_redis(settings: Settings) -> AsyncIterator[Redis]:
+    redis = create_redis(settings)
+    await redis.flushdb()
+    yield redis
+    await redis.aclose()
 
 
 @pytest.fixture
