@@ -155,3 +155,64 @@ curl -s -X POST localhost:8000/v1/admin/bonuses \
 
 An overlapping bonus on the same route returns `409` with `"code": "BONUS_OVERLAP"`.
 Missing or wrong `X-Admin-Key` returns `401` with `"code": "ADMIN_AUTH_REQUIRED"`.
+
+## Transfer walkthrough
+
+Every command below was run in order against a freshly reset stack (`make reset`).
+
+```bash
+# 1. Balances before
+curl -s localhost:8000/v1/accounts -H "X-User-Id: user_alice"
+# NOVA_REWARDS 250000, SKYWARD_MILES 45000, ...
+
+# 2. Quote (no side effects)
+curl -s -X POST localhost:8000/v1/quotes -H "Content-Type: application/json" \
+  -d '{"source_program":"NOVA_REWARDS","destination_program":"SKYWARD_MILES","source_points":10000}'
+# base_points 10000, bonus_points 2500, destination_points 12500
+
+# 3. Transfer (Idempotency-Key required)
+curl -s -X POST localhost:8000/v1/transfers \
+  -H "Content-Type: application/json" -H "X-User-Id: user_alice" \
+  -H "Idempotency-Key: demo-transfer-001" \
+  -d '{"source_program":"NOVA_REWARDS","destination_program":"SKYWARD_MILES","source_points":10000}'
+# HTTP 201, "status": "COMPLETED", "partner_confirmation_id": "SKYWARD-7C880C70660A",
+# events: PENDING -> SOURCE_DEBITED -> PARTNER_SUBMITTED -> COMPLETED
+
+# 4. Retry with the same key: the stored response, no second debit
+curl -s -i -X POST localhost:8000/v1/transfers \
+  -H "Content-Type: application/json" -H "X-User-Id: user_alice" \
+  -H "Idempotency-Key: demo-transfer-001" \
+  -d '{"source_program":"NOVA_REWARDS","destination_program":"SKYWARD_MILES","source_points":10000}'
+# HTTP/1.1 201 Created
+# idempotent-replayed: true
+
+# 5. Balances after: NOVA -10000 once, SKYWARD +12500
+curl -s localhost:8000/v1/accounts -H "X-User-Id: user_alice"
+# NOVA_REWARDS 240000, SKYWARD_MILES 57500, ...
+
+# 6. One transfer, with its timeline, and the list
+curl -s localhost:8000/v1/transfers/<transfer_id> -H "X-User-Id: user_alice"
+curl -s "localhost:8000/v1/transfers?limit=5" -H "X-User-Id: user_alice"
+# {"data": [...], "next_cursor": null}   pass next_cursor back as ?cursor=... for more
+
+# 7. The ledger is still consistent
+make check-invariants
+# OK: all 4 ledger invariants hold (20 accounts, 12 journals)
+```
+
+A failed partner credit is compensated automatically:
+
+```bash
+curl -s -X POST localhost:8001/simulator/config -H "Content-Type: application/json" \
+  -d '{"partner_code":"SKYWARD","mode":"reject"}'
+curl -s -X POST localhost:8000/v1/transfers \
+  -H "Content-Type: application/json" -H "X-User-Id: user_alice" \
+  -H "Idempotency-Key: demo-transfer-002" \
+  -d '{"source_program":"NOVA_REWARDS","destination_program":"SKYWARD_MILES","source_points":10000}'
+# HTTP 201, "status": "REVERSED", "failure": {"code": "PARTNER_REJECTED", ...}
+# the 10000 NOVA points are back in the balance
+```
+
+HTTP status of POST /v1/transfers: `201` when the transfer reached a final state
+(`COMPLETED` or `REVERSED` — read `status`), `202` while it is still being resolved
+(`PENDING_VERIFICATION`), `4xx` when nothing was created.

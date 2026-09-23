@@ -19,14 +19,6 @@ MEMBER = "SKY100200301"
 
 
 @pytest.fixture
-async def simulator(settings: Settings) -> AsyncIterator[httpx.AsyncClient]:
-    async with httpx.AsyncClient(base_url=settings.partner_base_url) as client:
-        await client.post("/simulator/reset")
-        yield client
-        await client.post("/simulator/reset")
-
-
-@pytest.fixture
 async def adapter(settings: Settings) -> AsyncIterator[HttpPartnerAdapter]:
     # A short read timeout keeps the timeout scenarios fast.
     client = build_http_client(settings.partner_base_url, connect_timeout=1.0, read_timeout=0.5)

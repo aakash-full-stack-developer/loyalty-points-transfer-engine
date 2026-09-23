@@ -8,15 +8,20 @@ from typing import Annotated, cast
 
 from fastapi import Depends, Header, Request
 from redis.asyncio import Redis
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.cache.rate_cache import CachedRouteProvider, RouteCache
+from app.cache.rate_limiter import FixedWindowRateLimiter
 from app.config import Settings
+from app.db.models import User
 from app.domain.errors import DomainError, ErrorCode
+from app.partners.registry import PartnerRegistry
 from app.services.idempotency import IdempotencyService
 from app.services.rate_admin import RateAdminService
 from app.services.rate_engine import QuoteService
 from app.services.rate_repository import RateRepository
+from app.services.transfer_service import TransferService
 
 
 def get_settings_dep(request: Request) -> Settings:
@@ -85,6 +90,25 @@ def get_idempotency_service(
 
 
 IdempotencyServiceDep = Annotated[IdempotencyService, Depends(get_idempotency_service)]
+
+
+def get_partner_registry(request: Request) -> PartnerRegistry:
+    return cast(PartnerRegistry, request.app.state.partners)
+
+
+def get_transfer_service(
+    session_factory: SessionFactoryDep,
+    partners: Annotated[PartnerRegistry, Depends(get_partner_registry)],
+    settings: SettingsDep,
+) -> TransferService:
+    return TransferService(
+        session_factory,
+        partners,
+        verification_delay=timedelta(seconds=settings.reconciliation_initial_delay_seconds),
+    )
+
+
+TransferServiceDep = Annotated[TransferService, Depends(get_transfer_service)]
 QuoteServiceDep = Annotated[QuoteService, Depends(get_quote_service)]
 RateAdminServiceDep = Annotated[RateAdminService, Depends(get_rate_admin_service)]
 
@@ -93,20 +117,47 @@ _USER_ID_PATTERN = re.compile(r"[A-Za-z0-9_.-]{1,64}")
 
 
 async def get_current_user_id(
+    session_factory: SessionFactoryDep,
     x_user_id: Annotated[
         str | None,
         Header(description="Stand-in for an authenticated identity (auth is out of scope)"),
     ] = None,
 ) -> str:
-    """The caller's user id. In production this would come from a verified token."""
+    """The caller's user id. In production this would come from a verified token; here the
+    header must name an existing user, as a token would. An unknown identity is treated as
+    unauthenticated (401), the same answer a real authentication layer would give."""
     if x_user_id is None or not _USER_ID_PATTERN.fullmatch(x_user_id):
         raise DomainError(
             ErrorCode.AUTHENTICATION_REQUIRED, "Missing or malformed X-User-Id header."
         )
+    async with session_factory() as session:
+        exists = await session.scalar(select(User.id).where(User.id == x_user_id))
+    if exists is None:
+        raise DomainError(ErrorCode.AUTHENTICATION_REQUIRED, "Unknown user.")
     return x_user_id
 
 
 CurrentUserId = Annotated[str, Depends(get_current_user_id)]
+
+
+async def enforce_transfer_rate_limit(
+    user_id: CurrentUserId, redis: RedisDep, settings: SettingsDep
+) -> None:
+    """Per-user fixed-window limit on transfer creation (fails open if Redis is down)."""
+    limiter = FixedWindowRateLimiter(
+        redis,
+        scope="transfers",
+        limit=settings.rate_limit_transfers_per_window,
+        window_seconds=settings.rate_limit_window_seconds,
+    )
+    decision = await limiter.hit(user_id)
+    if not decision.allowed:
+        raise DomainError(
+            ErrorCode.RATE_LIMITED,
+            f"At most {decision.limit} transfers per {settings.rate_limit_window_seconds} s.",
+            headers={"Retry-After": str(decision.retry_after_seconds)},
+            retry_after_seconds=decision.retry_after_seconds,
+        )
 
 
 async def require_admin(

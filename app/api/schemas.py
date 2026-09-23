@@ -9,7 +9,7 @@ from typing import Annotated, Any
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StrictInt, StringConstraints
 
-from app.domain.enums import ProgramType
+from app.domain.enums import ProgramType, TransferStatus
 
 # Upper bound for any single point amount. Far above any real transfer, and it keeps every
 # intermediate product (points * numerator) comfortably inside PostgreSQL BIGINT.
@@ -97,6 +97,60 @@ class QuoteResponse(BaseModel):
     rate: RateSnapshotOut
     quoted_at: datetime
     expires_at: datetime
+
+
+# ---------------------------------------------------------------- transfers
+class TransferCreateRequest(RequestModel):
+    source_program: ProgramCode
+    destination_program: ProgramCode
+    source_points: Points
+
+
+class TransferSourceOut(BaseModel):
+    program: str
+    points: int
+
+
+class TransferDestinationOut(BaseModel):
+    program: str
+    points: int
+    base_points: int
+    bonus_points: int
+
+
+class TransferFailureOut(BaseModel):
+    code: str
+    message: str | None
+
+
+class TransferEventOut(BaseModel):
+    from_status: TransferStatus | None
+    to_status: TransferStatus
+    reason: str
+    metadata: dict[str, Any]
+    created_at: datetime
+
+
+class TransferSummaryOut(BaseModel):
+    id: str
+    status: TransferStatus
+    source: TransferSourceOut
+    destination: TransferDestinationOut
+    rate: RateSnapshotOut
+    failure: TransferFailureOut | None
+    partner_confirmation_id: str | None
+    created_at: datetime
+    updated_at: datetime
+    completed_at: datetime | None
+
+
+class TransferOut(TransferSummaryOut):
+    events: list[TransferEventOut]
+
+
+class TransferList(BaseModel):
+    data: list[TransferSummaryOut]
+    next_cursor: str | None
 
 
 # ---------------------------------------------------------------- admin

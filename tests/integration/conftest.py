@@ -10,12 +10,15 @@ import asyncio
 import os
 import re
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 import asyncpg
+import httpx
 import pytest
 from alembic import command
 from alembic.config import Config as AlembicConfig
+from fastapi import FastAPI
 from redis.asyncio import Redis
 from sqlalchemy import make_url, text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
@@ -24,6 +27,7 @@ from app.cache.redis import create_redis
 from app.config import Settings
 from app.db.base import Base
 from app.db.session import create_engine, create_session_factory, unit_of_work
+from app.main import create_app
 from scripts.seed import SeedReport, seed
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -81,7 +85,41 @@ def _test_redis_url() -> str:
 
 @pytest.fixture
 def settings(test_database_url: str) -> Settings:
-    return Settings(environment="test", database_url=test_database_url, redis_url=_test_redis_url())
+    return Settings(
+        environment="test",
+        database_url=test_database_url,
+        redis_url=_test_redis_url(),
+        # Short partner timeouts keep timeout scenarios around one second each.
+        partner_connect_timeout_seconds=0.5,
+        partner_read_timeout_seconds=1.0,
+        partner_retry_max_attempts=2,
+        partner_retry_base_delay_ms=10,
+        partner_retry_max_delay_ms=50,
+        partner_total_deadline_seconds=3.0,
+        # Tests create many transfers per user; the limiter has its own test.
+        rate_limit_transfers_per_window=10_000,
+    )
+
+
+@pytest.fixture
+async def simulator(settings: Settings) -> AsyncIterator[httpx.AsyncClient]:
+    """Client for the partner simulator container, reset before and after the test.
+    Resetting also clears modes set by hand in the dev stack."""
+    async with httpx.AsyncClient(base_url=settings.partner_base_url) as client:
+        await client.post("/simulator/reset")
+        yield client
+        await client.post("/simulator/reset")
+
+
+@asynccontextmanager
+async def running_app(settings: Settings) -> AsyncIterator[tuple[FastAPI, httpx.AsyncClient]]:
+    """A separately configured app with its lifespan running (for per-test settings)."""
+    app = create_app(settings)
+    async with (
+        app.router.lifespan_context(app),
+        httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client,
+    ):
+        yield app, client
 
 
 @pytest.fixture(autouse=True)

@@ -59,6 +59,9 @@ class Settings(BaseSettings):
     # Security
     admin_api_key: SecretStr = SecretStr("change-me-admin-key")
 
+    # Reconciliation of unknown partner outcomes
+    reconciliation_initial_delay_seconds: PositiveInt = 10
+
     # Health checks
     health_check_timeout_seconds: PositiveFloat = 2.0
 

@@ -99,7 +99,9 @@ def request_id_of(request: Request) -> str | None:
 async def _domain_error_handler(request: Request, exc: Exception) -> JSONResponse:
     assert isinstance(exc, DomainError)
     body = domain_error_body(exc, request.url.path, request_id_of(request))
-    return JSONResponse(body, status_code=exc.status, media_type=PROBLEM_MEDIA_TYPE)
+    return JSONResponse(
+        body, status_code=exc.status, media_type=PROBLEM_MEDIA_TYPE, headers=exc.headers or None
+    )
 
 
 async def _validation_error_handler(request: Request, exc: Exception) -> JSONResponse:

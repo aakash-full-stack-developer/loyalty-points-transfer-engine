@@ -18,6 +18,8 @@ class ErrorCode(StrEnum):
     METHOD_NOT_ALLOWED = "METHOD_NOT_ALLOWED"
     ADMIN_AUTH_REQUIRED = "ADMIN_AUTH_REQUIRED"
     AUTHENTICATION_REQUIRED = "AUTHENTICATION_REQUIRED"
+    RATE_LIMITED = "RATE_LIMITED"
+    INVALID_CURSOR = "INVALID_CURSOR"
     HTTP_ERROR = "HTTP_ERROR"
     INTERNAL_ERROR = "INTERNAL_ERROR"
 
@@ -33,8 +35,10 @@ class ErrorCode(StrEnum):
     INVALID_INCREMENT = "INVALID_INCREMENT"
     ZERO_DESTINATION_POINTS = "ZERO_DESTINATION_POINTS"
 
-    # Balances
+    # Accounts and transfers
+    ACCOUNT_NOT_FOUND = "ACCOUNT_NOT_FOUND"
     INSUFFICIENT_BALANCE = "INSUFFICIENT_BALANCE"
+    TRANSFER_NOT_FOUND = "TRANSFER_NOT_FOUND"
 
     # Idempotency
     IDEMPOTENCY_KEY_REQUIRED = "IDEMPOTENCY_KEY_REQUIRED"
@@ -66,9 +70,15 @@ ERROR_CATALOGUE: dict[ErrorCode, ErrorSpec] = {
     ErrorCode.AUTHENTICATION_REQUIRED: ErrorSpec(
         HTTPStatus.UNAUTHORIZED, "A valid X-User-Id header is required"
     ),
+    ErrorCode.RATE_LIMITED: ErrorSpec(HTTPStatus.TOO_MANY_REQUESTS, "Too many requests"),
+    ErrorCode.INVALID_CURSOR: ErrorSpec(HTTPStatus.BAD_REQUEST, "Invalid pagination cursor"),
+    ErrorCode.ACCOUNT_NOT_FOUND: ErrorSpec(
+        HTTPStatus.UNPROCESSABLE_ENTITY, "No account in this program for the user"
+    ),
     ErrorCode.INSUFFICIENT_BALANCE: ErrorSpec(
         HTTPStatus.UNPROCESSABLE_ENTITY, "Insufficient balance"
     ),
+    ErrorCode.TRANSFER_NOT_FOUND: ErrorSpec(HTTPStatus.NOT_FOUND, "Transfer not found"),
     ErrorCode.IDEMPOTENCY_KEY_REQUIRED: ErrorSpec(
         HTTPStatus.BAD_REQUEST, "The Idempotency-Key header is required"
     ),
@@ -122,12 +132,16 @@ class DomainError(Exception):
 
     `detail` is safe to show to API clients. `extra` adds machine-readable fields to the
     problem body (for example the minimum amount), so clients need not parse the message.
+    `headers` are added to the HTTP response (for example Retry-After).
     """
 
-    def __init__(self, code: ErrorCode, detail: str, **extra: Any) -> None:
+    def __init__(
+        self, code: ErrorCode, detail: str, *, headers: dict[str, str] | None = None, **extra: Any
+    ) -> None:
         super().__init__(detail)
         self.code = code
         self.detail = detail
+        self.headers = headers or {}
         self.extra = extra
 
     @property

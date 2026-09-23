@@ -32,14 +32,11 @@ async def test_users_only_see_their_own_accounts(client: httpx.AsyncClient) -> N
     assert accounts["SKYWARD_MILES"]["external_member_id"] == "****0302"
 
 
-async def test_unknown_user_has_no_accounts(client: httpx.AsyncClient) -> None:
-    response = await client.get("/v1/accounts", headers={"X-User-Id": "user_nobody"})
-
-    assert response.status_code == 200
-    assert response.json()["data"] == []
-
-
-@pytest.mark.parametrize("headers", [{}, {"X-User-Id": "not a valid id!"}], ids=["missing", "bad"])
+@pytest.mark.parametrize(
+    "headers",
+    [{}, {"X-User-Id": "not a valid id!"}, {"X-User-Id": "user_nobody"}],
+    ids=["missing", "malformed", "unknown_user"],
+)
 async def test_user_identity_is_required(
     client: httpx.AsyncClient, headers: dict[str, str]
 ) -> None:
