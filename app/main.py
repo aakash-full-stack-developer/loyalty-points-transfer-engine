@@ -14,6 +14,8 @@ from app.config import Settings, get_settings
 from app.db.session import create_engine, create_session_factory
 from app.observability.logging import configure_logging
 from app.observability.middleware import RequestContextMiddleware
+from app.partners.registry import build_partner_client, build_partner_registry
+from app.partners.resilience import CircuitBreakerRegistry
 
 logger = structlog.get_logger(__name__)
 
@@ -26,10 +28,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.db_engine = engine
     app.state.session_factory = create_session_factory(engine)
     app.state.redis = redis
+    partner_client = build_partner_client(settings)
+    app.state.circuit_breakers = CircuitBreakerRegistry(
+        failure_threshold=settings.circuit_breaker_failure_threshold,
+        cooldown_seconds=settings.circuit_breaker_cooldown_seconds,
+    )
+    app.state.partners = build_partner_registry(
+        settings, partner_client, app.state.circuit_breakers
+    )
     logger.info("api_started", environment=settings.environment, version=__version__)
     try:
         yield
     finally:
+        await partner_client.aclose()
         await redis.aclose()
         await engine.dispose()
         logger.info("api_stopped")
